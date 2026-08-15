@@ -237,7 +237,7 @@ private fun PairingSection(
     onClearPairing: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Inbox Pairing", style = MaterialTheme.typography.titleMedium)
+        Text("Plugin Pairing", style = MaterialTheme.typography.titleMedium)
 
         if (pairing != null && pairing.isValid) {
             Card(
@@ -247,8 +247,13 @@ private fun PairingSection(
                 ),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    val statusText = if (pairing.isV1) {
+                        "v1 paired — LAN discovery active"
+                    } else {
+                        "v0 paired (legacy P2P stream)"
+                    }
                     Text(
-                        "Paired (P2P stream active after QR dial)",
+                        statusText,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -259,11 +264,17 @@ private fun PairingSection(
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                     Text(
-                        "Protocol: ${pairing.proto}",
+                        "Code: ${pairing.shortCode}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
-                    if (pairing.hasCircuitRelay) {
+                    if (pairing.isV1) {
+                        Text(
+                            "Browsing _glass-pair._tcp. on LAN",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    } else if (pairing.hasCircuitRelay) {
                         Text(
                             "Circuit relay available",
                             style = MaterialTheme.typography.bodySmall,
@@ -272,10 +283,17 @@ private fun PairingSection(
                     }
                 }
             }
-            Text(
-                "Chat uses P2P stream when connected. Falls back to HTTPS if stream drops.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            if (pairing.isV1) {
+                Text(
+                    "v1 pairing uses LAN discovery. Off-LAN connections fail closed.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Text(
+                    "Chat uses P2P stream when connected. Falls back to HTTPS if stream drops.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             OutlinedButton(
                 onClick = onClearPairing,
                 modifier = Modifier.fillMaxWidth(),
@@ -284,8 +302,8 @@ private fun PairingSection(
             }
         } else {
             Text(
-                "Pair with your inbox to enable secure P2P communication. " +
-                    "Scan the QR code or enter the short code from your inbox setup.",
+                "Pair with the plugin to enable LAN communication. " +
+                    "Scan the v1 QR code from the plugin.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Button(
@@ -297,7 +315,7 @@ private fun PairingSection(
                     contentDescription = null,
                     modifier = Modifier.padding(end = 8.dp),
                 )
-                Text("Pair Inbox")
+                Text("Pair Plugin")
             }
         }
     }
@@ -323,7 +341,7 @@ private fun AdvancedHttpsSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Advanced: HTTPS Fallback", style = MaterialTheme.typography.titleMedium)
+            Text("Advanced (HTTP inbox parked)", style = MaterialTheme.typography.titleMedium)
             Icon(
                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = if (expanded) "Collapse" else "Expand",
@@ -333,40 +351,40 @@ private fun AdvancedHttpsSection(
         AnimatedVisibility(visible = expanded) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Legacy HTTPS transport (being replaced by P2P pairing). " +
-                        "Only use this if instructed by support or for debugging.",
+                    "HTTP inbox is parked. v1 pairing uses LAN discovery instead. " +
+                        "Token may be needed for future bearer auth. URL is optional.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Active source: ${inbox.source}" +
-                        if (inbox.isConfigured) " (configured)" else " (unset)",
+                    "Source: ${inbox.source}" +
+                        if (inbox.hasToken) " (token set)" else " (no token)",
                     style = MaterialTheme.typography.labelMedium,
-                )
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = onUrlChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Inbox base URL") },
-                    placeholder = { Text("https://inbox.example.invalid") },
-                    singleLine = true,
                 )
                 OutlinedTextField(
                     value = token,
                     onValueChange = onTokenChange,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Bearer token (GLASS_PHONE_TOKEN)") },
+                    label = { Text("Bearer token (optional)") },
                     visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = onUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Inbox URL (parked, optional)") },
+                    placeholder = { Text("") },
                     singleLine = true,
                 )
                 Button(
                     onClick = onSave,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Save HTTPS settings")
+                    Text("Save")
                 }
                 Text(
-                    "Paths: POST /v0/messages · GET /v0/replies · Authorization: Bearer",
+                    "v1 pairing browses _glass-pair._tcp. on LAN. HTTP inbox is not required.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

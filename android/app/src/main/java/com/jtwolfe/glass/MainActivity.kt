@@ -27,6 +27,8 @@ import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
 import com.jtwolfe.glass.p2p.PairResult
+import com.jtwolfe.glass.pairing.DiscoveryState
+import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
@@ -60,6 +62,7 @@ class MainActivity : ComponentActivity() {
 
     private val xaiOAuth = XaiOAuth()
     private var pendingDeviceCode: DeviceCodeResponse? = null
+    private var lanDiscovery: LanDiscovery? = null
 
     private val roleRequest = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -253,62 +256,92 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val app = application as GlassApplication
 
-            // First save the invite
+            // Save the invite
             app.pairingStore.save(invite)
             pairing = invite
 
-            // If PSK is available, dial and perform the stream handshake
-            val psk = invite.psk
-            if (psk != null && invite.addrs.isNotEmpty()) {
+            if (invite.isV1) {
+                // v1: Start LAN discovery for _glass-pair._tcp.
                 Toast.makeText(
                     this@MainActivity,
-                    "Connecting to inbox P2P...",
+                    "Searching for plugin on LAN...",
                     Toast.LENGTH_SHORT,
                 ).show()
 
-                val streamClient = app.inboxStreamClient
-                withContext(Dispatchers.IO) {
-                    streamClient.start()
+                val discovery = LanDiscovery(this@MainActivity)
+                lanDiscovery = discovery
+
+                val resolved = withContext(Dispatchers.IO) {
+                    discovery.discoverPlugin(invite.peer)
                 }
 
-                val result = withContext(Dispatchers.IO) {
-                    streamClient.dialAndPair(
-                        peerId = invite.peer,
-                        addrs = invite.addrs,
-                        psk = psk,
-                        exp = invite.exp,
-                    )
-                }
-
-                when (result) {
-                    is PairResult.Success -> {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Paired with inbox (P2P connected)",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                    is PairResult.Expired -> {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Invite expired. Please scan a new QR code.",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                    is PairResult.Error -> {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Paired (HTTPS fallback): ${result.message}",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
+                if (resolved != null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Found plugin on LAN — waiting for pair accept",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Plugin not on this LAN. Make sure the plugin is running on the same network.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }
             } else {
-                Toast.makeText(
-                    this@MainActivity,
-                    "Paired with inbox (HTTPS fallback)",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                // v0 (legacy): PSK-based P2P dial
+                val psk = invite.psk
+                if (psk != null && invite.addrs.isNotEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Connecting to inbox P2P...",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+
+                    val streamClient = app.inboxStreamClient
+                    withContext(Dispatchers.IO) {
+                        streamClient.start()
+                    }
+
+                    val result = withContext(Dispatchers.IO) {
+                        streamClient.dialAndPair(
+                            peerId = invite.peer,
+                            addrs = invite.addrs,
+                            psk = psk,
+                            exp = invite.exp,
+                        )
+                    }
+
+                    when (result) {
+                        is PairResult.Success -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Paired with inbox (P2P connected)",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        is PairResult.Expired -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Invite expired. Please scan a new QR code.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        is PairResult.Error -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Paired (HTTPS fallback): ${result.message}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Paired with inbox (HTTPS fallback)",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
         }
     }
@@ -317,6 +350,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val app = application as GlassApplication
             app.pairingStore.clear()
+            lanDiscovery?.reset()
+            lanDiscovery = null
             pairing = null
             Toast.makeText(this@MainActivity, "Unpaired", Toast.LENGTH_SHORT).show()
         }

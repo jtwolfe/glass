@@ -10,14 +10,38 @@ import kotlinx.coroutines.flow.map
 
 private val Context.inboxDataStore by preferencesDataStore(name = "glass_inbox")
 
+/**
+ * Inbox configuration.
+ *
+ * For v1 pairing (plugin): URL is optional. Token is optional (only if bearer needed later).
+ * For v0/HTTPS fallback: URL and token are required.
+ *
+ * HTTP inbox is parked — URL field is hidden/demoted in Settings.
+ */
 data class InboxConfig(
     val url: String,
     val token: String,
     val source: String,
 ) {
-    val isConfigured: Boolean
+    /**
+     * True if HTTP inbox is configured (url + token).
+     * Not required for v1 pairing which uses LAN discovery.
+     */
+    val isHttpConfigured: Boolean
         get() = url.isNotBlank() && token.isNotBlank() &&
             !url.contains("inbox.example.invalid")
+
+    /**
+     * Legacy alias for compatibility. HTTP inbox is optional for v1.
+     */
+    val isConfigured: Boolean
+        get() = isHttpConfigured
+
+    /**
+     * True if token is available (may be used for future bearer auth).
+     */
+    val hasToken: Boolean
+        get() = token.isNotBlank()
 }
 
 class InboxSettings(private val context: Context) {
@@ -48,6 +72,12 @@ class InboxSettings(private val context: Context) {
     suspend fun save(url: String, token: String) {
         context.inboxDataStore.edit { prefs ->
             prefs[urlKey] = url.trim()
+            prefs[tokenKey] = token.trim()
+        }
+    }
+
+    suspend fun saveToken(token: String) {
+        context.inboxDataStore.edit { prefs ->
             prefs[tokenKey] = token.trim()
         }
     }

@@ -26,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -60,6 +62,7 @@ fun PairingScreen(
     relayConfigured: Boolean,
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -69,6 +72,7 @@ fun PairingScreen(
         )
     }
     var shortCode by rememberSaveable { mutableStateOf("") }
+    var pastedJson by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var scannedInvite by remember { mutableStateOf<PairingInvite?>(null) }
 
@@ -97,7 +101,7 @@ fun PairingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pair Inbox") },
+                title = { Text("Pair Plugin") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -114,7 +118,7 @@ fun PairingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "Scan the QR code from your inbox setup, or enter the short code.",
+                "Scan the v1 QR code from the plugin, or paste the JSON line.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
@@ -122,7 +126,7 @@ fun PairingScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(280.dp)
+                        .height(240.dp)
                         .background(Color.Black),
                 ) {
                     QrScanner(
@@ -130,7 +134,7 @@ fun PairingScreen(
                             PairingInvite.fromQrJson(json)?.let { invite ->
                                 scannedInvite = invite
                             } ?: run {
-                                error = "Invalid QR code format"
+                                error = "Invalid QR code format. Expected v1 JSON: {v, peer, pub, code, exp}"
                             }
                         },
                     )
@@ -139,7 +143,7 @@ fun PairingScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(280.dp)
+                        .height(240.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -154,7 +158,53 @@ fun PairingScreen(
             }
 
             Text(
-                "Or enter the short code (8 characters):",
+                "Or paste the JSON invite:",
+                style = MaterialTheme.typography.titleSmall,
+            )
+
+            OutlinedTextField(
+                value = pastedJson,
+                onValueChange = { pastedJson = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("JSON invite") },
+                placeholder = { Text("{\"v\":1,\"peer\":\"...\",\"pub\":\"...\",\"code\":\"...\",\"exp\":\"...\"}") },
+                minLines = 2,
+                maxLines = 3,
+            )
+
+            Button(
+                onClick = {
+                    val invite = PairingInvite.fromQrJson(pastedJson)
+                    if (invite != null) {
+                        if (invite.isExpired) {
+                            error = "Invite expired. Request a new one from the plugin."
+                        } else {
+                            scannedInvite = invite
+                        }
+                    } else {
+                        error = "Invalid JSON format. Expected v1: {v, peer, pub, code, exp}"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = pastedJson.contains("\"peer\""),
+            ) {
+                Text("Pair with JSON")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    val clip = clipboardManager.getText()?.text
+                    if (clip != null) {
+                        pastedJson = clip
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Paste from Clipboard")
+            }
+
+            Text(
+                "Typed 8-char code (/glass/pair/<code>):",
                 style = MaterialTheme.typography.titleSmall,
             )
 
@@ -162,35 +212,20 @@ fun PairingScreen(
                 value = shortCode,
                 onValueChange = { shortCode = it.uppercase().take(8) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Short code") },
+                label = { Text("Short code (stubbed)") },
                 placeholder = { Text("K7M2Q9WH") },
                 singleLine = true,
             )
 
-            if (!relayConfigured) {
-                Text(
-                    "Short-code pairing requires a relay multiaddr. " +
-                        "Scan the QR code instead (works without relay).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-
             Button(
                 onClick = {
-                    if (shortCode.length < 6) {
-                        error = "Code must be at least 6 characters"
-                    } else if (!relayConfigured) {
-                        error = "No relay configured. Scan the QR code instead."
-                    } else {
-                        error = "Typed-code pairing subscribes to /glass/pair/<code>. " +
-                            "This path is ready when inbox PR #3 relay is live."
-                    }
+                    error = "Typed-code pairing via gossipsub /glass/pair/<code> is stubbed. " +
+                        "Scan the QR code or paste the JSON instead."
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = shortCode.length >= 6 && relayConfigured,
+                enabled = shortCode.length == 8,
             ) {
-                Text("Pair with code")
+                Text("Pair with code (stubbed)")
             }
 
             error?.let { msg ->
@@ -204,8 +239,8 @@ fun PairingScreen(
             Spacer(Modifier.weight(1f))
 
             Text(
-                "After pairing, communication uses protocol /glass/inbox/v0 over libp2p " +
-                    "(P2P is the product path). HTTPS fallback is available in advanced settings.",
+                "After scanning a v1 invite, the phone browses _glass-pair._tcp. on LAN to find the plugin. " +
+                    "Off-LAN connections fail closed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

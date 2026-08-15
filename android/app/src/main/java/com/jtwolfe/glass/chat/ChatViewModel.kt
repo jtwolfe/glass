@@ -65,15 +65,14 @@ class ChatViewModel(
                 _state.update { ui ->
                     ui.copy(
                         inbox = config,
-                        status = if (config.isConfigured) {
-                            "Inbox (${config.source})"
-                        } else {
-                            "Local-only — inbox URL/token unset"
+                        status = when {
+                            config.isHttpConfigured -> "Inbox HTTP (${config.source})"
+                            else -> "Local-only — v1 pairing uses LAN discovery"
                         },
                     )
                 }
                 restartPolling(config)
-                if (config.isConfigured) {
+                if (config.isHttpConfigured) {
                     refreshRemote(config)
                 }
             }
@@ -101,7 +100,7 @@ class ChatViewModel(
 
     fun refresh() {
         val config = _state.value.inbox
-        if (config.isConfigured) {
+        if (config.isHttpConfigured) {
             viewModelScope.launch { refreshRemote(config) }
         }
     }
@@ -121,7 +120,7 @@ class ChatViewModel(
             }
             persistLocal()
             val config = _state.value.inbox
-            if (config.isConfigured) {
+            if (config.isHttpConfigured) {
                 runCatching { repository.sendRemote(config, outgoing) }
                     .onFailure { err ->
                         _state.update {
@@ -152,7 +151,7 @@ class ChatViewModel(
         if (id.isBlank()) return null
 
         // Try inbox audio endpoint first (it may have pre-rendered audio)
-        if (config.isConfigured) {
+        if (config.isHttpConfigured) {
             val inboxAudio = runCatching { repository.fetchReplyAudio(config, id) }.getOrNull()
             if (inboxAudio != null && inboxAudio.isNotEmpty()) {
                 return inboxAudio
@@ -194,7 +193,7 @@ class ChatViewModel(
 
         // Fall back to inbox STT (503 returns null → use on-device)
         val config = _state.value.inbox
-        if (config.isConfigured) {
+        if (config.isHttpConfigured) {
             return runCatching { repository.transcribe(config, audio) }.getOrNull()
         }
 
@@ -231,7 +230,7 @@ class ChatViewModel(
 
     private fun restartPolling(config: InboxConfig) {
         pollJob?.cancel()
-        if (!config.isConfigured) return
+        if (!config.isHttpConfigured) return
         pollJob = viewModelScope.launch {
             while (isActive) {
                 delay(8_000)
