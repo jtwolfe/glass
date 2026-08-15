@@ -41,39 +41,49 @@ The inbox is **not publicly exposed**. Nash (phone) connects via libp2p with one
 ### Listen Addresses
 
 - **HTTP** `:3000` — In-cluster health checks only (`/v0/health`)
-- **libp2p TCP** `:4001` — P2P swarm (private, PSK-gated)
+- **libp2p TCP** `:4001` — P2P swarm
+
+### Pairing (glass-pair/v0)
+
+Inbox mints pairing. On startup it prints:
+1. The **short code** (6-8 alphanumeric chars)
+2. The **QR payload** (JSON)
+
+```json
+{
+  "v": 0,
+  "peer": "<inbox libp2p peer id>",
+  "addrs": ["<inbox multiaddr>", ...],
+  "proto": "/glass/inbox/v0",
+  "code": "ABC123"
+}
+```
 
 ### Pairing Flow
 
-1. Nash shows a QR code with:
-   ```json
-   {
-     "v": 1,
-     "proto": "glass-pair",
-     "peer": "<inbox peer id>",
-     "addrs": ["<multiaddr>"],
-     "pair": "<32 hex>",
-     "relay": ["<optional relay multiaddrs>"]
-   }
-   ```
-2. Short code displayed = first 8 hex of `pair`
-3. Inbox is configured with `GLASS_PAIR_CODE` (same value)
-4. Phone dials inbox, sends PSK via `/glass/pair/1.0.0`
-5. If PSK matches, inbox allowlists the phone's peer ID
-6. Phone can now use `/glass/inbox/1.0.0` protocol
+1. Inbox starts, mints code, prints QR JSON and code to logs
+2. Nash scans QR or user enters short code
+3. Phone dials inbox at `addrs`, opens `/glass/inbox/v0` stream
+4. Phone sends first message with `{"code": "ABC123"}`
+5. If code matches, inbox allowlists phone's peer ID → `{"status": 200, "body": {"paired": true}}`
+6. Subsequent requests use normal v0 verbs with Bearer token
 
-### Protocols
+### Protocol: `/glass/inbox/v0`
 
-| Protocol | Description |
-|----------|-------------|
-| `/glass/pair/1.0.0` | One-time pairing (PSK verification) |
-| `/glass/inbox/1.0.0` | JSON request/response (v0 contract) |
+| Verb | Description |
+|------|-------------|
+| `POST /v0/messages` | Create message (phone: as jamie, pane: as ashleigh) |
+| `GET /v0/replies` | Ashleigh replies only (phone) |
+| `GET /v0/messages` | Full transcript (pane) |
+| `GET /v0/health` | Liveness check |
+
+Phone sends `Authorization: Bearer <GLASS_PHONE_TOKEN>` in request headers.
 
 ### Private Swarm
 
-- PSK derived from pairing secret
-- Only paired peers can use `/glass/inbox/1.0.0`
-- Unauthenticated swarm peers get `401 Unauthorized`
+- Unpaired peers get `401 Unauthorized`
+- After pairing, only the paired peer can use `/glass/inbox/v0`
+- One-time code: after pair succeeds, code cannot be reused
 
 ### Relay (Optional)
 
@@ -81,7 +91,7 @@ If NAT traversal needs a meeting point, set `GLASS_RELAY_ADDRS` to comma-separat
 
 ---
 
-## Inbox Protocol (`/glass/inbox/1.0.0`)
+## Inbox Protocol (`/glass/inbox/v0`)
 
 JSON request/response over libp2p streams. Same contract as HTTP v0.
 
@@ -95,6 +105,12 @@ JSON request/response over libp2p streams. Same contract as HTTP v0.
   "body": { ... },
   "query": { "after": "...", "limit": "50" }
 }
+```
+
+### Pairing Request (first message only)
+
+```json
+{ "code": "ABC123" }
 ```
 
 ### Response Format
@@ -115,7 +131,7 @@ JSON request/response over libp2p streams. Same contract as HTTP v0.
 | `/v0/messages` | GET | Pane | Full transcript |
 | `/v0/replies` | GET | Phone | Ashleigh replies only |
 
-Phone still sends `Authorization: Bearer <GLASS_PHONE_TOKEN>` in the request headers.
+Phone sends `Authorization: Bearer <GLASS_PHONE_TOKEN>` in request headers.
 
 ---
 
@@ -175,8 +191,9 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 |----------|----------|---------|-------------|
 | `GLASS_PHONE_TOKEN` | Yes | — | Bearer token for phone role |
 | `GLASS_PANE_TOKEN` | Yes | — | Bearer token for pane role |
-| `GLASS_PAIR_CODE` | Yes* | — | Pairing secret (hex, min 8 chars). *Required for P2P. |
+| `GLASS_PAIR_CODE` | No | (minted) | Pairing code (6-8 chars). If not set, inbox mints one. |
 | `GLASS_RELAY_ADDRS` | No | — | Comma-separated relay multiaddrs for NAT traversal |
+| `GLASS_ENABLE_P2P` | No | `true` | Set to `false` to disable libp2p |
 | `PORT` | No | `3000` | HTTP listen port |
 | `GLASS_P2P_PORT` | No | `4001` | libp2p TCP listen port |
 | `GLASS_DB_PATH` | No | `/data/glass.db` | SQLite database path |

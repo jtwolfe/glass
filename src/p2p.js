@@ -9,23 +9,32 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { pipe } from 'it-pipe';
 import * as lp from 'it-length-prefixed';
 import { fromString, toString } from 'uint8arrays';
-import { createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
-const PAIR_PROTOCOL = '/glass/pair/1.0.0';
-const INBOX_PROTOCOL = '/glass/inbox/1.0.0';
+const INBOX_PROTOCOL = '/glass/inbox/v0';
 
 let node = null;
 let allowedPeers = new Set();
 let pairingComplete = false;
 let pairCode = null;
+let pairingPayload = null;
 
-function derivePsk(pairSecret) {
-  const hash = createHash('sha256').update(pairSecret).digest();
-  return hash;
+function generatePairCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(6);
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[bytes[i] % chars.length];
+  }
+  return code;
 }
 
 export function getPairCode() {
   return pairCode;
+}
+
+export function getPairingPayload() {
+  return pairingPayload;
 }
 
 export function isPairingComplete() {
@@ -42,18 +51,17 @@ export function allowPeer(peerId) {
 
 export async function createP2PNode(options = {}) {
   const {
-    pairSecret,
+    code,
     relayAddrs = [],
     listenPort = 4001,
     onInboxRequest,
   } = options;
 
-  if (!pairSecret || pairSecret.length < 8) {
-    throw new Error('GLASS_PAIR_CODE must be set (at least 8 hex characters)');
+  pairCode = code || generatePairCode();
+  
+  if (pairCode.length < 6) {
+    throw new Error('Pair code must be at least 6 characters');
   }
-
-  pairCode = pairSecret.slice(0, 8).toLowerCase();
-  const psk = derivePsk(pairSecret);
 
   const relayMultiaddrs = relayAddrs
     .filter(a => a && a.trim())
@@ -77,89 +85,21 @@ export async function createP2PNode(options = {}) {
       dcutr: dcutr(),
     },
     connectionGater: {
-      denyDialPeer: async (peerId) => {
-        if (!pairingComplete && allowedPeers.size === 0) {
-          return false;
-        }
-        return !isPeerAllowed(peerId);
-      },
+      denyDialPeer: async () => false,
       denyInboundConnection: async () => false,
       denyOutboundConnection: async () => false,
-      denyInboundEncryptedConnection: async (peerId) => {
-        if (!pairingComplete && allowedPeers.size === 0) {
-          return false;
-        }
-        return !isPeerAllowed(peerId);
-      },
-      denyOutboundEncryptedConnection: async (peerId) => {
-        if (!pairingComplete && allowedPeers.size === 0) {
-          return false;
-        }
-        return !isPeerAllowed(peerId);
-      },
-      denyInboundUpgradedConnection: async (peerId) => {
-        if (!pairingComplete && allowedPeers.size === 0) {
-          return false;
-        }
-        return !isPeerAllowed(peerId);
-      },
-      denyOutboundUpgradedConnection: async (peerId) => {
-        if (!pairingComplete && allowedPeers.size === 0) {
-          return false;
-        }
-        return !isPeerAllowed(peerId);
-      },
+      denyInboundEncryptedConnection: async () => false,
+      denyOutboundEncryptedConnection: async () => false,
+      denyInboundUpgradedConnection: async () => false,
+      denyOutboundUpgradedConnection: async () => false,
     },
     connectionManager: {
       maxConnections: 10,
     },
   });
 
-  node.handle(PAIR_PROTOCOL, async ({ connection, stream }) => {
-    const remotePeer = connection.remotePeer.toString();
-    
-    try {
-      const chunks = [];
-      for await (const chunk of pipe(stream.source, lp.decode)) {
-        chunks.push(chunk);
-      }
-      
-      const data = JSON.parse(toString(chunks[0]));
-      
-      if (data.psk && createHash('sha256').update(data.psk).digest().equals(psk)) {
-        allowPeer(connection.remotePeer);
-        pairingComplete = true;
-        
-        await pipe(
-          [fromString(JSON.stringify({ ok: true, peerId: node.peerId.toString() }))],
-          lp.encode,
-          stream.sink
-        );
-        
-        console.log(`Paired with peer: ${remotePeer}`);
-      } else {
-        await pipe(
-          [fromString(JSON.stringify({ ok: false, error: 'invalid_psk' }))],
-          lp.encode,
-          stream.sink
-        );
-      }
-    } catch (err) {
-      console.error('Pairing error:', err.message);
-    }
-  });
-
   node.handle(INBOX_PROTOCOL, async ({ connection, stream }) => {
     const remotePeer = connection.remotePeer;
-    
-    if (!isPeerAllowed(remotePeer)) {
-      await pipe(
-        [fromString(JSON.stringify({ error: 'Unauthorized', status: 401 }))],
-        lp.encode,
-        stream.sink
-      );
-      return;
-    }
     
     try {
       const chunks = [];
@@ -169,11 +109,33 @@ export async function createP2PNode(options = {}) {
       
       const request = JSON.parse(toString(chunks[0]));
       
+      if (!isPeerAllowed(remotePeer)) {
+        if (request.code === pairCode && !pairingComplete) {
+          allowPeer(remotePeer);
+          pairingComplete = true;
+          console.log(`Paired with peer: ${remotePeer.toString()}`);
+          
+          await pipe(
+            [fromString(JSON.stringify({ status: 200, body: { paired: true } }))],
+            lp.encode,
+            stream.sink
+          );
+          return;
+        }
+        
+        await pipe(
+          [fromString(JSON.stringify({ status: 401, body: { error: 'Unauthorized' } }))],
+          lp.encode,
+          stream.sink
+        );
+        return;
+      }
+      
       let response;
       if (onInboxRequest) {
         response = await onInboxRequest(request);
       } else {
-        response = { error: 'Not implemented', status: 501 };
+        response = { status: 501, body: { error: 'Not implemented' } };
       }
       
       await pipe(
@@ -185,7 +147,7 @@ export async function createP2PNode(options = {}) {
       console.error('Inbox protocol error:', err.message);
       try {
         await pipe(
-          [fromString(JSON.stringify({ error: 'Internal error', status: 500 }))],
+          [fromString(JSON.stringify({ status: 500, body: { error: 'Internal error' } }))],
           lp.encode,
           stream.sink
         );
@@ -207,9 +169,14 @@ export async function createP2PNode(options = {}) {
   }
 
   const addrs = node.getMultiaddrs().map(a => a.toString());
-  console.log(`libp2p node started. Peer ID: ${node.peerId.toString()}`);
-  console.log(`Listening on: ${addrs.join(', ')}`);
-  console.log(`Pair code (first 8 hex): ${pairCode}`);
+  
+  pairingPayload = {
+    v: 0,
+    peer: node.peerId.toString(),
+    addrs: addrs,
+    proto: INBOX_PROTOCOL,
+    code: pairCode,
+  };
 
   return node;
 }
@@ -225,6 +192,7 @@ export async function stopP2PNode() {
     allowedPeers.clear();
     pairingComplete = false;
     pairCode = null;
+    pairingPayload = null;
   }
 }
 
@@ -236,5 +204,6 @@ export function getNodeInfo() {
     pairCode,
     pairingComplete,
     allowedPeers: Array.from(allowedPeers),
+    pairingPayload,
   };
 }
