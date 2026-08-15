@@ -12,8 +12,12 @@ import com.jtwolfe.glass.chat.ChatViewModel
 fun GlassRoot(
     viewModel: ChatViewModel,
     isDefaultAssistant: Boolean,
+    hasMicPermission: Boolean,
     onRequestAssistantRole: () -> Unit,
     onOpenAssistantSettings: () -> Unit,
+    onRequestMicPermission: () -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf("chat") }
@@ -30,11 +34,15 @@ fun GlassRoot(
         else -> ChatScreen(
             state = state,
             isDefaultAssistant = isDefaultAssistant,
+            hasMicPermission = hasMicPermission,
             onDraftChange = viewModel::onDraftChange,
             onSend = viewModel::send,
             onOpenSettings = { screen = "settings" },
             onRequestAssistantRole = onRequestAssistantRole,
             onDismissError = viewModel::dismissError,
+            onRequestMicPermission = onRequestMicPermission,
+            onStartListening = onStartListening,
+            onStopListening = onStopListening,
         )
     }
 }

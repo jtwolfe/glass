@@ -10,10 +10,12 @@ import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -25,6 +27,8 @@ data class ChatUiState(
     val sending: Boolean = false,
     val status: String? = null,
     val error: String? = null,
+    val isListening: Boolean = false,
+    val partialTranscript: String = "",
 )
 
 class ChatViewModel(
@@ -36,14 +40,21 @@ class ChatViewModel(
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
+    private val _newAshleighMessages = Channel<V0Message>(Channel.BUFFERED)
+    val newAshleighMessages = _newAshleighMessages.receiveAsFlow()
+
     private var pollJob: Job? = null
     private var afterCursor: String = EPOCH
+    private var lastSpokenAt: String = EPOCH
 
     init {
         viewModelScope.launch {
             val local = repository.loadLocal()
             _state.update { it.copy(messages = local) }
             afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
+            lastSpokenAt = local
+                .filter { it.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) }
+                .maxOfOrNull { it.at } ?: EPOCH
             settings.config.collect { config ->
                 _state.update { ui ->
                     ui.copy(
@@ -65,6 +76,17 @@ class ChatViewModel(
 
     fun onDraftChange(value: String) {
         _state.update { it.copy(draft = value) }
+    }
+
+    fun onListeningStateChange(isListening: Boolean, partial: String = "") {
+        _state.update { it.copy(isListening = isListening, partialTranscript = partial) }
+    }
+
+    fun onVoiceTranscript(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        _state.update { it.copy(draft = trimmed) }
+        send()
     }
 
     fun onAssistOpened() {
@@ -121,6 +143,16 @@ class ChatViewModel(
             .onSuccess { remote ->
                 if (remote.isNotEmpty()) {
                     afterCursor = remote.maxOf { it.at }
+                }
+                val newAshleigh = remote.filter { msg ->
+                    msg.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) &&
+                        msg.at > lastSpokenAt
+                }
+                if (newAshleigh.isNotEmpty()) {
+                    lastSpokenAt = newAshleigh.maxOf { it.at }
+                    newAshleigh.sortedBy { it.at }.forEach { msg ->
+                        _newAshleighMessages.trySend(msg)
+                    }
                 }
                 _state.update { ui ->
                     ui.copy(messages = merge(ui.messages, remote), error = null)

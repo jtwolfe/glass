@@ -8,7 +8,28 @@ Nash owns this client. Quay owns the public HTTPS inbox. No routing, no other te
 
 The app registers as a `VoiceInteractionService` and handles `ACTION_ASSIST`. On first run / Settings, it requests `RoleManager.ROLE_ASSISTANT` and falls back to system voice-input / default-assistant settings.
 
-Long-press home (or any assist gesture) opens the Ashleigh chat.
+Long-press home (or any assist gesture) opens the Ashleigh chat and **immediately starts listening** for voice input.
+
+## Voice input & output
+
+### Microphone permission
+
+The app requests `RECORD_AUDIO` permission when you first try to use voice. A brief rationale explains that Jamie's voice goes to Ashleigh via the on-device speech recognizer.
+
+### Hold-to-talk
+
+- **Mic button** in the composer: hold to talk, release to send
+- **On assist open** (long-press home): automatically starts listening
+- Uses Android's built-in `SpeechRecognizer` — system STT only, no paid cloud APIs
+- Partial transcripts appear as you speak; final transcript posts to the inbox just like typed messages
+
+### Text-to-speech
+
+When Ashleigh replies (fetched via `GET /v0/replies`), the app speaks her words using Android `TextToSpeech`. TTS stops if you start a new voice input.
+
+### Keyboard fallback
+
+The typed composer remains available for users who prefer typing or when voice is unavailable.
 
 ## Inbox v0 (phone)
 

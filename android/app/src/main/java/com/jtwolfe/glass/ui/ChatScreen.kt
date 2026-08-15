@@ -15,8 +15,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.jtwolfe.glass.chat.ChatUiState
 import com.jtwolfe.glass.inbox.V0Message
@@ -52,11 +55,15 @@ import java.time.format.DateTimeFormatter
 fun ChatScreen(
     state: ChatUiState,
     isDefaultAssistant: Boolean,
+    hasMicPermission: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onOpenSettings: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onDismissError: () -> Unit,
+    onRequestMicPermission: () -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
@@ -123,8 +130,14 @@ fun ChatScreen(
             Composer(
                 draft = state.draft,
                 sending = state.sending,
+                isListening = state.isListening,
+                partialTranscript = state.partialTranscript,
+                hasMicPermission = hasMicPermission,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
+                onRequestMicPermission = onRequestMicPermission,
+                onStartListening = onStartListening,
+                onStopListening = onStopListening,
             )
         }
     }
@@ -187,26 +200,71 @@ private fun MessageBubble(message: V0Message) {
 private fun Composer(
     draft: String,
     sending: Boolean,
+    isListening: Boolean,
+    partialTranscript: String,
+    hasMicPermission: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onRequestMicPermission: () -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("Message Ashleigh") },
-            maxLines = 4,
-            enabled = !sending,
-        )
-        Button(onClick = onSend, enabled = draft.isNotBlank() && !sending) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (isListening && partialTranscript.isNotEmpty()) {
+            Text(
+                text = partialTranscript,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = { },
+                enabled = !sending,
+                modifier = Modifier.pointerInput(hasMicPermission) {
+                    detectTapGestures(
+                        onPress = {
+                            if (!hasMicPermission) {
+                                onRequestMicPermission()
+                            } else {
+                                onStartListening()
+                                tryAwaitRelease()
+                                onStopListening()
+                            }
+                        },
+                    )
+                },
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = if (isListening) "Listening..." else "Hold to talk",
+                    tint = if (isListening) MaterialTheme.colorScheme.error else Color.Unspecified,
+                )
+            }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                modifier = Modifier.weight(1f),
+                placeholder = {
+                    Text(
+                        if (isListening) "Listening..." else "Message Ashleigh",
+                    )
+                },
+                maxLines = 4,
+                enabled = !sending && !isListening,
+            )
+            Button(onClick = onSend, enabled = draft.isNotBlank() && !sending && !isListening) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
         }
     }
 }
