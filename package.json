@@ -12,7 +12,7 @@
   "keywords": ["glass", "inbox", "api", "libp2p", "p2p"],
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.1",

@@ -1,5 +1,5 @@
 # Build stage - compile native modules
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -15,7 +15,7 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Runtime stage - slim image
-FROM node:20-slim
+FROM node:22-slim
 
 WORKDIR /app
 
