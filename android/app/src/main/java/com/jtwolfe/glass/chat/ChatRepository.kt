@@ -53,7 +53,7 @@ class ChatRepository(
             }
         }
 
-        // v0: Use P2P stream if connected, otherwise fall back to HTTPS
+        // v0: Use P2P stream if connected
         val stream = streamClient
         if (stream != null && stream.isConnected && stream.isPaired) {
             val response = stream.getReplies(config.token, after)
@@ -61,7 +61,13 @@ class ChatRepository(
                 return V0Message.listFromEnvelope(response.body)
             }
         }
-        return client.fetchReplies(config, after)
+
+        // Fallback: HTTPS inbox only if URL is actually configured
+        if (config.isHttpConfigured) {
+            return client.fetchReplies(config, after)
+        }
+
+        return emptyList()
     }
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message {
@@ -85,7 +91,7 @@ class ChatRepository(
             }
         }
 
-        // v0: Use P2P stream if connected, otherwise fall back to HTTPS
+        // v0: Use P2P stream if connected
         val stream = streamClient
         if (stream != null && stream.isConnected && stream.isPaired) {
             val response = stream.postMessage(
@@ -101,7 +107,13 @@ class ChatRepository(
                 }.getOrDefault(message)
             }
         }
-        return client.postMessage(config, message)
+
+        // Fallback: HTTPS inbox only if URL is actually configured
+        if (config.isHttpConfigured) {
+            return client.postMessage(config, message)
+        }
+
+        return message
     }
 
     suspend fun transcribe(config: InboxConfig, audio: ByteArray): String? =
