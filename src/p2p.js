@@ -5,19 +5,23 @@ import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { dcutr } from '@libp2p/dcutr';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr } from '@multiformats/multiaddr';
 import { pipe } from 'it-pipe';
 import * as lp from 'it-length-prefixed';
 import { fromString, toString } from 'uint8arrays';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 const INBOX_PROTOCOL = '/glass/inbox/v0';
 const INVITE_VALIDITY_MS = 15 * 60 * 1000;
+const PAIR_TOPIC_PREFIX = '/glass/pair/';
 
 let node = null;
 let allowedPeers = new Set();
 let pairingComplete = false;
 let invite = null;
+let pairTopic = null;
+let topicCleanupTimer = null;
 
 const CROCKFORD_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ2345679';
 
@@ -36,10 +40,6 @@ function generatePsk() {
 
 function pskToHex(psk) {
   return psk.toString('hex');
-}
-
-function hexToPsk(hex) {
-  return Buffer.from(hex, 'hex');
 }
 
 export function getInvite() {
@@ -69,11 +69,41 @@ function verifyPsk(providedPsk) {
   return providedPsk === invite.psk;
 }
 
+async function cleanupPairTopic() {
+  if (pairTopic && node && node.services.pubsub) {
+    try {
+      node.services.pubsub.unsubscribe(pairTopic);
+      console.log(`Unsubscribed from topic: ${pairTopic}`);
+    } catch (err) {
+      console.warn(`Failed to unsubscribe from topic: ${err.message}`);
+    }
+    pairTopic = null;
+  }
+  if (topicCleanupTimer) {
+    clearTimeout(topicCleanupTimer);
+    topicCleanupTimer = null;
+  }
+}
+
+async function publishInviteOnce() {
+  if (!pairTopic || !node || !node.services.pubsub || !invite) return;
+  
+  try {
+    const inviteJson = JSON.stringify(invite);
+    const data = fromString(inviteJson);
+    await node.services.pubsub.publish(pairTopic, data);
+    console.log(`Published invite on topic: ${pairTopic}`);
+  } catch (err) {
+    console.warn(`Failed to publish invite: ${err.message}`);
+  }
+}
+
 export async function createP2PNode(options = {}) {
   const {
     relayAddrs = [],
     listenPort = 4001,
     onInboxRequest,
+    pubsubImpl,
   } = options;
 
   const code = generateCode(8);
@@ -84,10 +114,24 @@ export async function createP2PNode(options = {}) {
     .filter(a => a && a.trim())
     .map(a => multiaddr(a.trim()));
 
+  const hasRelay = relayMultiaddrs.length > 0;
+
   const transports = [tcp()];
   
-  if (relayMultiaddrs.length > 0) {
+  if (hasRelay) {
     transports.push(circuitRelayTransport());
+  }
+
+  const services = {
+    identify: identify(),
+    dcutr: dcutr(),
+  };
+
+  if (hasRelay) {
+    services.pubsub = pubsubImpl || gossipsub({
+      allowPublishToZeroTopicPeers: true,
+      emitSelf: false,
+    });
   }
 
   node = await createLibp2p({
@@ -97,10 +141,7 @@ export async function createP2PNode(options = {}) {
     transports,
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
-    services: {
-      identify: identify(),
-      dcutr: dcutr(),
-    },
+    services,
     connectionGater: {
       denyDialPeer: async () => false,
       denyInboundConnection: async () => false,
@@ -131,6 +172,8 @@ export async function createP2PNode(options = {}) {
           allowPeer(remotePeer);
           pairingComplete = true;
           console.log(`Paired with peer: ${remotePeer.toString()}`);
+          
+          await cleanupPairTopic();
           
           await pipe(
             [fromString(JSON.stringify({ status: 200, body: { paired: true } }))],
@@ -192,7 +235,7 @@ export async function createP2PNode(options = {}) {
 
   await node.start();
 
-  if (relayMultiaddrs.length > 0) {
+  if (hasRelay) {
     for (const addr of relayMultiaddrs) {
       try {
         await node.dial(addr);
@@ -215,6 +258,21 @@ export async function createP2PNode(options = {}) {
     exp: exp,
   };
 
+  if (hasRelay && node.services.pubsub) {
+    pairTopic = `${PAIR_TOPIC_PREFIX}${code}`;
+    
+    node.services.pubsub.subscribe(pairTopic);
+    console.log(`Subscribed to topic: ${pairTopic}`);
+    
+    setTimeout(() => publishInviteOnce(), 1000);
+    
+    const expMs = new Date(exp).getTime() - Date.now();
+    topicCleanupTimer = setTimeout(() => {
+      console.log('Invite expired, cleaning up topic');
+      cleanupPairTopic();
+    }, expMs);
+  }
+
   return node;
 }
 
@@ -222,7 +280,12 @@ export function getNode() {
   return node;
 }
 
+export function getPairTopic() {
+  return pairTopic;
+}
+
 export async function stopP2PNode() {
+  await cleanupPairTopic();
   if (node) {
     await node.stop();
     node = null;
@@ -240,5 +303,6 @@ export function getNodeInfo() {
     invite,
     pairingComplete,
     allowedPeers: Array.from(allowedPeers),
+    pairTopic,
   };
 }

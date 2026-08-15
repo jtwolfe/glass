@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createP2PNode, stopP2PNode, isPeerAllowed, allowPeer, getNodeInfo, getInvite } from '../src/p2p.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { createP2PNode, stopP2PNode, isPeerAllowed, allowPeer, getNodeInfo, getInvite, getPairTopic } from '../src/p2p.js';
 import { initDb, closeDb } from '../src/db.js';
 
 const PHONE_TOKEN = 'test-phone-token';
@@ -154,6 +154,127 @@ describe('P2P Node', () => {
     expect(info.invite).toBeDefined();
     expect(info.invite.code).toBeDefined();
     expect(info.invite.psk).toBeDefined();
+  });
+
+  it('does not set up pubsub topic without relay', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+
+    expect(getPairTopic()).toBeNull();
+  });
+});
+
+describe('P2P Pubsub Rendezvous', () => {
+  beforeAll(() => {
+    initDb(':memory:');
+  });
+
+  afterAll(async () => {
+    await stopP2PNode();
+    closeDb();
+  });
+
+  beforeEach(async () => {
+    await stopP2PNode();
+  });
+
+  it('sets up pair topic when relay configured', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    const subscribeCalls = [];
+    const publishCalls = [];
+    
+    const createMockPubsub = () => {
+      return () => ({
+        subscribe: (topic) => { subscribeCalls.push(topic); },
+        unsubscribe: vi.fn(),
+        publish: (topic, data) => { 
+          publishCalls.push({ topic, data }); 
+          return Promise.resolve();
+        },
+        getTopics: () => [],
+        getPeers: () => [],
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      });
+    };
+    
+    await createP2PNode({
+      listenPort: 0,
+      relayAddrs: ['/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWFakeRelayPeerId'],
+      onInboxRequest: handleInboxRequest,
+      pubsubImpl: createMockPubsub(),
+    });
+
+    const invite = getInvite();
+    const expectedTopic = `/glass/pair/${invite.code}`;
+    
+    expect(subscribeCalls).toContain(expectedTopic);
+    expect(getPairTopic()).toBe(expectedTopic);
+  });
+
+  it('publishes invite JSON on the pair topic', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    const publishCalls = [];
+    
+    const createMockPubsub = () => {
+      return () => ({
+        subscribe: vi.fn(),
+        unsubscribe: vi.fn(),
+        publish: (topic, data) => { 
+          publishCalls.push({ topic, data }); 
+          return Promise.resolve();
+        },
+        getTopics: () => [],
+        getPeers: () => [],
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      });
+    };
+    
+    await createP2PNode({
+      listenPort: 0,
+      relayAddrs: ['/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWFakeRelayPeerId'],
+      onInboxRequest: handleInboxRequest,
+      pubsubImpl: createMockPubsub(),
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    const invite = getInvite();
+    const expectedTopic = `/glass/pair/${invite.code}`;
+    
+    expect(publishCalls.length).toBeGreaterThan(0);
+    const call = publishCalls.find(c => c.topic === expectedTopic);
+    expect(call).toBeDefined();
+    
+    const publishedInvite = JSON.parse(new TextDecoder().decode(call.data));
+    expect(publishedInvite.v).toBe(0);
+    expect(publishedInvite.code).toBe(invite.code);
+    expect(publishedInvite.psk).toBe(invite.psk);
+    expect(publishedInvite.peer).toBe(invite.peer);
+    expect(publishedInvite.proto).toBe('/glass/inbox/v0');
+  });
+
+  it('does not set up pubsub without relay addrs', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const info = getNodeInfo();
+    expect(info.pairTopic).toBeNull();
   });
 });
 
