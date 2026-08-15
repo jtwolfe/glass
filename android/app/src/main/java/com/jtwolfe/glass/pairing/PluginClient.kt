@@ -18,14 +18,17 @@ import java.net.Socket
  * TCP client for glass-pair v1 plugin protocol.
  *
  * Raw TCP, one UTF-8 JSON object per line. No varint, no libp2p, no relay.
- * Connect to mDNS-resolved host:port only (no baked IPs).
+ * Connect to mDNS-resolved host:port only (no baked IPs, no inbox URL).
  *
- * Operations:
- * - pair:    {"v":1,"op":"pair","code":"<8 Crockford>"}
- * - send:    {"v":1,"op":"send","from":"jamie","text":"...","at":"<ISO-8601>"}
- * - replies: {"v":1,"op":"replies","after":"<ISO-8601>","limit":50}
+ * Pair (no op field):
+ *   {"v":1,"code":"<8 Crockford>"}\n → {"v":1,"ok":true} or {"v":1,"ok":false}
  *
- * If authorization is available, add "authorization":"Bearer <token>" on send/replies.
+ * Talk (same socket or reconnect):
+ *   {"v":1,"op":"send","from":"jamie","text":"...","at":"<ISO-8601>"}
+ *   {"v":1,"op":"replies","after":"<ISO-8601>","limit":50}
+ *
+ * Token is optional JSON field (not HTTP header):
+ *   "authorization":"Bearer <token>" on send/replies if Settings has a token.
  */
 class PluginClient : Closeable {
 
@@ -92,7 +95,6 @@ class PluginClient : Closeable {
 
             val request = JSONObject()
                 .put("v", 1)
-                .put("op", "pair")
                 .put("code", code)
 
             w.write(request.toString())
