@@ -221,7 +221,7 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 | `GLASS_PHONE_TOKEN` | Yes | — | Bearer token for phone role |
 | `GLASS_PANE_TOKEN` | Yes | — | Bearer token for pane role |
 | `GLASS_RELAY_ADDRS` | No | — | Comma-separated relay multiaddrs |
-| `GLASS_ANNOUNCE_ADDRS` | No | — | Comma-separated multiaddrs to advertise in invite (e.g. `/ip4/192.168.1.20/tcp/4001`) |
+| `GLASS_ANNOUNCE_ADDRS` | No | — | Comma-separated multiaddrs to advertise in invite (e.g. `/ip4/192.168.1.200/tcp/4001`) |
 | `GLASS_ENABLE_P2P` | No | `true` | Set to `false` to disable libp2p |
 | `PORT` | No | `3000` | HTTP listen port |
 | `GLASS_P2P_PORT` | No | `4001` | libp2p TCP listen port |
@@ -229,7 +229,7 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 
 Invite is minted automatically on startup (8-char code + 32-byte PSK + 15-min expiry).
 
-**`GLASS_ANNOUNCE_ADDRS`**: By default, the invite `addrs` contain the container's internal IPs (127.0.0.1, Docker bridge, etc.) which are unreachable from a phone on the LAN. Set this to your host's LAN IP to make the invite dialable.
+**`GLASS_ANNOUNCE_ADDRS`**: Without this, the invite `addrs` contain only 127.0.0.1 or Docker bridge IPs (172.17.0.x) which the phone cannot dial. Set to your host's LAN IP so the QR contains `/ip4/192.168.1.200/tcp/4001` (or your actual LAN IP).
 
 ---
 
@@ -239,15 +239,15 @@ Invite is minted automatically on startup (8-char code + 32-byte PSK + 15-min ex
 docker build -t glass-inbox-local .
 
 docker run -d --name glass-inbox-local \
-  -e GLASS_PHONE_TOKEN=<phone-token> \
-  -e GLASS_PANE_TOKEN=<pane-token> \
-  -e GLASS_ANNOUNCE_ADDRS=/ip4/<LAN-IP>/tcp/4001 \
+  -e GLASS_PHONE_TOKEN="$GLASS_PHONE_TOKEN" \
+  -e GLASS_PANE_TOKEN="$GLASS_PANE_TOKEN" \
+  -e GLASS_ANNOUNCE_ADDRS=/ip4/192.168.1.200/tcp/4001 \
   -p 127.0.0.1:3000:3000 \
-  -p 4001:4001 \
+  -p 127.0.0.1:4001:4001 \
   glass-inbox-local
 ```
 
-Replace `<LAN-IP>` with your host's LAN IP (e.g. `192.168.1.20`).
+Set `GLASS_PHONE_TOKEN` and `GLASS_PANE_TOKEN` in your shell env before running. Replace `192.168.1.200` with your host's LAN IP.
 
 ### Pairing
 
