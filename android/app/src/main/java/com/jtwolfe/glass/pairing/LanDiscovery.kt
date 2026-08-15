@@ -22,14 +22,15 @@ import kotlin.coroutines.resume
  * LAN discovery for glass-pair v1 using mDNS/NSD.
  *
  * Service type: _glass-pair._tcp.
- * Instance name: <52 char unpadded base32 of 32-byte device id>
+ * Instance name: 52-char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(device pub)
+ *   Example shape: 5coyrsvqsuzekhvfx3vlp7g4gr3aqphxrhqp6dllcwbi7xlfok4q
  *   (DNS labels max at 63 chars; 64-hex would fail on Avahi/NsdManager)
  *
  * Discovery flow:
- * 1. Phone scans v1 QR → gets peer (52-char base32 or 64-hex), pub, code, exp
- * 2. Phone derives 52-char base32 mDNS instance name from peer
+ * 1. Phone scans v1 QR → gets peer (52-char lowercase base32), pub, code, exp
+ * 2. mDNS instance name = peer string from QR exactly
  * 3. Phone browses _glass-pair._tcp. on LAN
- * 4. If instance name equals target: found plugin on LAN
+ * 4. If instance name equals peer: found plugin on LAN
  * 5. Take host:port from NSD advertisement only (no baked values)
  * 6. Store resolved host in memory only (never git)
  * 7. If nothing found in ~10s: fail-closed, "Plugin not on this LAN"
@@ -53,7 +54,7 @@ class LanDiscovery(private val context: Context) {
      * Browse for plugin advertising the given instance name on LAN.
      * Timeout after ~10 seconds if not found.
      *
-     * @param instanceName 52-char unpadded base32 mDNS instance name (from invite.mdnsInstanceName)
+     * @param instanceName 52-char lowercase base32 mDNS instance name (from invite.mdnsInstanceName)
      * @return ResolvedPlugin if found, null otherwise
      */
     suspend fun discoverPlugin(instanceName: String): ResolvedPlugin? =
@@ -62,7 +63,7 @@ class LanDiscovery(private val context: Context) {
             resolvedHost = null
 
             val result = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) {
-                discoverPluginInternal(instanceName.uppercase())
+                discoverPluginInternal(instanceName.lowercase())
             }
 
             if (result != null) {
@@ -121,7 +122,7 @@ class LanDiscovery(private val context: Context) {
                 override fun onServiceFound(serviceInfo: NsdServiceInfo?) {
                     if (resolved || serviceInfo == null) return
 
-                    val serviceName = serviceInfo.serviceName?.uppercase() ?: ""
+                    val serviceName = serviceInfo.serviceName?.lowercase() ?: ""
                     if (serviceName == targetInstanceName) {
                         try {
                             nsdManager.resolveService(serviceInfo, resolveListener)

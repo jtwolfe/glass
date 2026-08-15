@@ -20,14 +20,15 @@ import java.time.format.DateTimeParseException
  * v1 QR payload from plugin (Jamie's machine):
  * {
  *   "v": 1,
- *   "peer": "<52 char unpadded base32 of 32-byte device id>",
+ *   "peer": "<52 char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(device pub)>",
  *   "pub": "<64 hex X25519 ephemeral provision pub>",
  *   "code": "<8 Crockford A-Z2-7>",
  *   "exp": "<ISO-8601, ~15 min>"
  * }
  *
- * peer can also be 64-hex for old mints (backward compat), but mDNS
- * instance name is always the 52-char unpadded base32 form.
+ * Example peer shape: 5coyrsvqsuzekhvfx3vlp7g4gr3aqphxrhqp6dllcwbi7xlfok4q
+ * mDNS instance name = peer string from QR exactly.
+ * No addrs. No provision handshake. No relay. No inbox URL.
  *
  * v0 (legacy) QR payload:
  * {
@@ -122,10 +123,10 @@ class PairingStore(context: Context) {
 /**
  * glass-pair invite from QR or short-code exchange.
  *
- * v1 (plugin): peer (52-char base32 or 64-hex), pub (64 hex), code (8 Crockford), exp
+ * v1 (plugin): peer (52-char lowercase base32 a-z2-7), pub (64 hex), code (8 Crockford), exp
  * v0 (legacy inbox): peer, addrs, proto, code, psk, exp
  *
- * mDNS instance name is always the 52-char unpadded base32 form (DNS label max 63).
+ * mDNS instance name = peer string from QR exactly (DNS label max 63).
  */
 data class PairingInvite(
     val version: Int,
@@ -170,9 +171,9 @@ data class PairingInvite(
 
     companion object {
         private val HEX_64_REGEX = Regex("^[a-fA-F0-9]{64}$")
-        private val BASE32_52_REGEX = Regex("^[A-Z2-7]{52}$", RegexOption.IGNORE_CASE)
+        private val BASE32_52_REGEX = Regex("^[a-z2-7]{52}$")
         private val CROCKFORD_8_REGEX = Regex("^[A-HJ-NP-Z2-9]{8}$", RegexOption.IGNORE_CASE)
-        private const val BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        private const val BASE32_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"
 
         fun fromQrJson(json: String): PairingInvite? {
             return try {
@@ -191,12 +192,12 @@ data class PairingInvite(
         }
 
         private fun parseV1(obj: JSONObject, peer: String): PairingInvite? {
-            val (normalizedPeer, peerBase32) = when {
-                BASE32_52_REGEX.matches(peer) -> peer.uppercase() to peer.uppercase()
+            val peerLower = peer.lowercase()
+            val peerBase32 = when {
+                BASE32_52_REGEX.matches(peerLower) -> peerLower
                 HEX_64_REGEX.matches(peer) -> {
                     val bytes = hexToBytes(peer) ?: return null
-                    val b32 = bytesToBase32(bytes)
-                    peer.lowercase() to b32
+                    bytesToBase32(bytes)
                 }
                 else -> return null
             }
@@ -211,7 +212,7 @@ data class PairingInvite(
 
             val invite = PairingInvite(
                 version = 1,
-                peer = normalizedPeer,
+                peer = peerBase32,
                 peerBase32 = peerBase32,
                 pub = pub.lowercase(),
                 code = code.uppercase(),
