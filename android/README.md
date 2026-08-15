@@ -4,6 +4,30 @@ Jamie ↔ Ashleigh chat that can replace the default assistant on long-press hom
 
 Nash owns this client. Quay owns the public HTTPS inbox. No routing, no other teams, no secrets in git.
 
+---
+
+## Quick Start: Install → Pair → Talk
+
+1. **Install** the debug APK from GitHub Release `apk-debug-0.1.0` (private repo — download while logged in as jtwolfe). Sideload on device; allow unknown sources when prompted.
+
+2. **Set as default assistant**: Settings → Apps → Default apps → Digital assistant app → Glass.
+
+3. **Grant microphone** when prompted on first voice use.
+
+4. **Scan the inbox QR** in Settings → Pair Inbox. The QR is raw JSON (UTF-8, not a URL) with `{v, peer, addrs, proto, code, psk, exp}`. The inbox mints the PSK — the phone does not generate a secret.
+
+5. **Talk** (hold-to-talk or type). Messages go to Ashleigh.
+
+### Pairing protocol notes
+
+- First `/glass/inbox/v0` frame is `{"psk":"<64 hex>"}` (unsigned-varint length prefix + JSON).
+- HTTPS fallback activates automatically until the P2P stream connects.
+- **Typed 8-char code pairing** (`/glass/pair/<code>` gossipsub) is **stubbed in this cut** — scan the QR for now.
+- The inbox QR must advertise Jamie's LAN IP (e.g. `192.168.x.x`), not `127.0.0.1`. The client skips loopback and unroutable addrs.
+- Do not invent `GLASS_RELAY_ADDRS`. Do not put tokens or PSKs in git or the APK.
+
+---
+
 ## Assistant role
 
 The app registers as a `VoiceInteractionService` and handles `ACTION_ASSIST`. On first run / Settings, it requests `RoleManager.ROLE_ASSISTANT` and falls back to system voice-input / default-assistant settings.

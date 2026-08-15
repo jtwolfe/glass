@@ -101,17 +101,24 @@ class InboxStreamClient : Closeable {
 
                 val remotePeerId = PeerId.fromBase58(peerId)
 
-                // Build multiaddrs with peer ID appended
+                // Build multiaddrs with peer ID appended, filtering out loopback/unroutable
                 val multiaddrs = addrs.mapNotNull { addr ->
                     runCatching {
                         val ma = Multiaddr(addr)
                         if (ma.has(Protocol.P2P)) ma
                         else Multiaddr("$addr/p2p/$peerId")
                     }.getOrNull()
-                }
+                }.filter { ma -> !isLoopbackOrUnroutable(ma) }
 
                 if (multiaddrs.isEmpty()) {
-                    return@withContext PairResult.Error("No valid addresses")
+                    val hadAddrs = addrs.isNotEmpty()
+                    return@withContext if (hadAddrs) {
+                        PairResult.Error(
+                            "Inbox QR advertised loopback — need Jamie's LAN IP, not 127.0.0.1"
+                        )
+                    } else {
+                        PairResult.Error("No valid addresses")
+                    }
                 }
 
                 // Try each address until one works
@@ -139,6 +146,16 @@ class InboxStreamClient : Closeable {
                 PairResult.Error(e.message ?: "Unknown error")
             }
         }
+    }
+
+    private fun isLoopbackOrUnroutable(ma: Multiaddr): Boolean {
+        val str = ma.toString()
+        return str.startsWith("/ip4/127.") ||
+            str.startsWith("/ip4/0.0.0.0/") ||
+            str.startsWith("/ip6/::1/") ||
+            str.contains("/dns4/localhost/") ||
+            str.contains("/dns6/localhost/") ||
+            str.contains("/dnsaddr/localhost/")
     }
 
     private suspend fun dialStream(
