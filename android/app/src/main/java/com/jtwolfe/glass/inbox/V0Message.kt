@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.time.Instant
 
 data class V0Message(
+    val id: String? = null,
     val from: String,
     val text: String,
     val at: String,
@@ -16,6 +17,7 @@ data class V0Message(
         .put("from", from)
         .put("text", text)
         .put("at", at)
+        .also { if (!id.isNullOrBlank()) it.put("id", id) }
 
     companion object {
         const val FROM_JAMIE = "jamie"
@@ -29,7 +31,8 @@ data class V0Message(
             if (text.isEmpty()) return null
             val from = obj.optString("from").ifBlank { FROM_ASHLEIGH }
             val at = obj.optString("at").ifBlank { Instant.now().toString() }
-            return V0Message(from = from, text = text, at = at)
+            val id = obj.optString("id").ifBlank { null }
+            return V0Message(id = id, from = from, text = text, at = at)
         }
 
         fun listFromJson(raw: String): List<V0Message> {
@@ -45,6 +48,19 @@ data class V0Message(
             } else {
                 listOfNotNull(fromJson(JSONObject(trimmed)))
             }
+        }
+
+        fun listFromEnvelope(raw: String): List<V0Message> {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return emptyList()
+            if (trimmed.startsWith("{")) {
+                val obj = JSONObject(trimmed)
+                if (obj.has("messages")) {
+                    return listFromJson(obj.getJSONArray("messages").toString())
+                }
+                return listOfNotNull(fromJson(obj))
+            }
+            return listFromJson(trimmed)
         }
 
         fun listToJson(messages: List<V0Message>): String {

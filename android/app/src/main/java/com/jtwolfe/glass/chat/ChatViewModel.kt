@@ -37,11 +37,13 @@ class ChatViewModel(
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var pollJob: Job? = null
+    private var afterCursor: String = EPOCH
 
     init {
         viewModelScope.launch {
             val local = repository.loadLocal()
             _state.update { it.copy(messages = local) }
+            afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
             settings.config.collect { config ->
                 _state.update { ui ->
                     ui.copy(
@@ -115,8 +117,11 @@ class ChatViewModel(
     }
 
     private suspend fun refreshRemote(config: InboxConfig) {
-        runCatching { repository.pullRemote(config) }
+        runCatching { repository.pullReplies(config, afterCursor) }
             .onSuccess { remote ->
+                if (remote.isNotEmpty()) {
+                    afterCursor = remote.maxOf { it.at }
+                }
                 _state.update { ui ->
                     ui.copy(messages = merge(ui.messages, remote), error = null)
                 }
@@ -144,13 +149,15 @@ class ChatViewModel(
 
     private fun merge(local: List<V0Message>, remote: List<V0Message>): List<V0Message> {
         val seen = LinkedHashSet<String>()
-        return (remote + local).filter { msg ->
-            val key = "${msg.from}|${msg.at}|${msg.text}"
+        return (local + remote).filter { msg ->
+            val key = msg.id?.takeIf { it.isNotBlank() } ?: "${msg.from}|${msg.at}|${msg.text}"
             seen.add(key)
         }.sortedBy { it.at }
     }
 
     companion object {
+        private const val EPOCH = "1970-01-01T00:00:00Z"
+
         fun factory(application: Application): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")

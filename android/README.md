@@ -10,7 +10,7 @@ The app registers as a `VoiceInteractionService` and handles `ACTION_ASSIST`. On
 
 Long-press home (or any assist gesture) opens the Ashleigh chat.
 
-## Inbox v0
+## Inbox v0 (phone)
 
 Contract message:
 
@@ -18,18 +18,21 @@ Contract message:
 {"from":"jamie"|"ashleigh","text":"...","at":"<ISO-8601>"}
 ```
 
-Assumed paths (Quay's inbox):
+Phone paths (Quay):
 
-- `POST {base}/v0/messages` — send. Outgoing body always `"from":"jamie"`.
-- `GET {base}/v0/messages` — JSON array of messages.
-- `Authorization: Bearer <token>`
+- `POST {base}/v0/messages` — send. Body always `"from":"jamie"`. Expect 201 `{id,from,text,at}`.
+- `GET {base}/v0/replies?after=<ISO-8601>&limit=50` — poll Ashleigh replies while assist is open. `after` is exclusive on `at`. Expect 200 `{messages:[...]}`.
+- `GET {base}/v0/health` — no auth, `{ok:true}`.
+- `Authorization: Bearer <token>` (`GLASS_PHONE_TOKEN` via `local.properties`).
+
+Do **not** call `GET /v0/messages`. That path is pane-only (Ashleigh).
 
 Configure **outside git**:
 
 1. Copy `local.properties.example` → `local.properties` and set `glass.inbox.url` / `glass.inbox.token` (baked into `BuildConfig` at compile time), **and/or**
 2. Enter URL + token on the in-app Settings screen (DataStore, device-only).
 
-Runtime settings override BuildConfig when non-empty. If both are unset, chat stays **local-only** on device. Network errors never crash the app.
+Runtime settings override BuildConfig when non-empty. If both are unset, chat stays **local-only** on device (POST stub, no poll). Network errors never crash the app. Public HTTPS host is TBD — do not point this at localhost for the Grok Bot path.
 
 ## How to run
 

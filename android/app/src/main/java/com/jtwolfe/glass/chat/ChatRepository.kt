@@ -27,7 +27,8 @@ class ChatRepository(
         context.localChatStore.edit { it[messagesKey] = V0Message.listToJson(messages) }
     }
 
-    suspend fun pullRemote(config: InboxConfig): List<V0Message> = client.fetchMessages(config)
+    suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> =
+        client.fetchReplies(config, after)
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message =
         client.postMessage(config, message)
