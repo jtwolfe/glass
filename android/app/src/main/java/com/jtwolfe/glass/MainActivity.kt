@@ -30,6 +30,8 @@ import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.DiscoveryState
 import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
+import com.jtwolfe.glass.pairing.TcpPairResult
+import com.jtwolfe.glass.pairing.TcpPairing
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
@@ -277,11 +279,47 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (resolved != null) {
+                    // TCP connect to resolved host:port and send pairing code
                     Toast.makeText(
                         this@MainActivity,
-                        "Found plugin on LAN — waiting for pair accept",
-                        Toast.LENGTH_LONG,
+                        "Pairing with plugin...",
+                        Toast.LENGTH_SHORT,
                     ).show()
+
+                    val pairResult = withContext(Dispatchers.IO) {
+                        TcpPairing.pair(resolved.host, resolved.port, invite.shortCode)
+                    }
+
+                    when (pairResult) {
+                        is TcpPairResult.Success -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Paired with plugin",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        is TcpPairResult.Timeout -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Pairing timed out. Plugin may have closed the connection.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        is TcpPairResult.Rejected -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Pairing rejected: ${pairResult.reason}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        is TcpPairResult.Error -> {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Pairing failed: ${pairResult.message}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
                 } else {
                     Toast.makeText(
                         this@MainActivity,
