@@ -46,7 +46,7 @@ class SpeechRecognizerHelper(
             return
         }
 
-        stopListening()
+        destroyRecognizer()
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(this@SpeechRecognizerHelper)
@@ -62,18 +62,26 @@ class SpeechRecognizerHelper(
         recognizer?.startListening(intent)
     }
 
+    /** End the utterance and wait for onResults / onError. Do not destroy here. */
     fun stopListening() {
+        if (_state.value.listeningState == ListeningState.LISTENING) {
+            _state.value = _state.value.copy(listeningState = ListeningState.PROCESSING)
+        }
+        recognizer?.stopListening()
+    }
+
+    fun reset() {
+        destroyRecognizer()
+        _state.value = SpeechState()
+    }
+
+    private fun destroyRecognizer() {
         recognizer?.apply {
-            stopListening()
+            setRecognitionListener(null)
             cancel()
             destroy()
         }
         recognizer = null
-    }
-
-    fun reset() {
-        stopListening()
-        _state.value = SpeechState()
     }
 
     override fun onReadyForSpeech(params: Bundle?) {
@@ -93,23 +101,23 @@ class SpeechRecognizerHelper(
     }
 
     override fun onError(error: Int) {
+        val benign = error == SpeechRecognizer.ERROR_NO_MATCH ||
+            error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+            error == SpeechRecognizer.ERROR_CLIENT
         val message = when (error) {
             SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-            SpeechRecognizer.ERROR_CLIENT -> "Client error"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required"
             SpeechRecognizer.ERROR_NETWORK -> "Network error"
             SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-            SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
             SpeechRecognizer.ERROR_SERVER -> "Server error"
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
-            else -> "Recognition error ($error)"
+            else -> null
         }
         _state.value = SpeechState(
-            listeningState = ListeningState.ERROR,
-            errorMessage = message,
+            listeningState = if (benign) ListeningState.IDLE else ListeningState.ERROR,
+            errorMessage = if (benign) null else message ?: "Recognition error ($error)",
         )
-        stopListening()
+        destroyRecognizer()
     }
 
     override fun onResults(results: Bundle?) {
@@ -122,7 +130,7 @@ class SpeechRecognizerHelper(
         if (transcript.isNotEmpty()) {
             onFinalTranscript(transcript)
         }
-        stopListening()
+        destroyRecognizer()
     }
 
     override fun onPartialResults(partialResults: Bundle?) {

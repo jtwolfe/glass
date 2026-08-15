@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        stopListening()
+        speechHelper?.reset()
     }
 
     override fun onDestroy() {
@@ -149,21 +149,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestMicPermission() {
-        if (shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
-            AlertDialog.Builder(this)
-                .setTitle("Microphone Permission")
-                .setMessage(
-                    "Glass needs microphone access so Jamie can talk to Ashleigh by voice. " +
-                        "Your voice is processed on-device by Android's speech recognizer.",
-                )
-                .setPositiveButton("Allow") { _, _ ->
-                    micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        } else {
-            micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        if (hasMicPermission) return
+        AlertDialog.Builder(this)
+            .setTitle("Talk to Ashleigh")
+            .setMessage(
+                "Glass uses the microphone so Jamie can talk to Ashleigh. " +
+                    "Speech is handled on-device by Android's recognizer. " +
+                    "Nothing is sent to a paid cloud STT. The transcript is posted " +
+                    "as Jamie's message, same as the keyboard.",
+            )
+            .setPositiveButton("Allow") { _, _ ->
+                micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun startListening() {
