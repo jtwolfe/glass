@@ -36,39 +36,61 @@ No secrets in this repo. Inbox auth is configured outside git.
 
 ## P2P Architecture
 
-The inbox is **not publicly exposed**. Nash (phone) connects via libp2p with one-time pairing.
+The inbox is **not publicly exposed**. Nash (phone) connects via libp2p with one-time invite.
 
 ### Listen Addresses
 
 - **HTTP** `:3000` — In-cluster health checks only (`/v0/health`)
 - **libp2p TCP** `:4001` — P2P swarm
 
-### Pairing (glass-pair/v0)
+### Invite (glass-pair/v0)
 
-Inbox mints pairing. On startup it prints:
-1. The **short code** (6-8 alphanumeric chars)
-2. The **QR payload** (JSON)
+Inbox mints one invite on startup. Prints QR (raw JSON UTF-8) and short code:
 
 ```json
 {
   "v": 0,
   "peer": "<inbox libp2p peer id>",
-  "addrs": ["<inbox multiaddr>", ...],
+  "addrs": ["<multiaddr>", ...],
   "proto": "/glass/inbox/v0",
-  "code": "ABC123"
+  "code": "K7M2Q9WH",
+  "psk": "<64 hex, 32-byte swarm key>",
+  "exp": "<ISO-8601>"
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `code` | 8 chars, Crockford base32 (A-Z2-7, no I/L/O/0/1) |
+| `psk` | 32-byte private swarm key (QR only, 64 hex chars) |
+| `exp` | Expires 15 minutes from mint |
+
 ### Pairing Flow
 
-1. Inbox starts, mints code, prints QR JSON and code to logs
-2. Nash scans QR or user enters short code
+**QR scan:**
+1. Inbox starts, mints invite, prints QR JSON and code to logs
+2. Nash scans QR (gets full invite with PSK)
 3. Phone dials inbox at `addrs`, opens `/glass/inbox/v0` stream
-4. Phone sends first message with `{"code": "ABC123"}`
-5. If code matches, inbox allowlists phone's peer ID → `{"status": 200, "body": {"paired": true}}`
-6. Subsequent requests use normal v0 verbs with Bearer token
+4. Phone sends `{"psk": "<64 hex>"}` as first message
+5. If PSK matches and not expired → peer allowlisted, invite consumed
+6. Subsequent requests use v0 verbs with Bearer token
+
+**Short-code only (via relay):**
+1. User enters short code on phone
+2. Phone subscribes to `/glass/pair/<code>` topic on relay
+3. Inbox (if connected to same relay) publishes full invite JSON once
+4. Phone receives invite, proceeds as above
+
+### Invite Rules
+
+- **Accepted once**: first successful `/glass/inbox/v0` stream using PSK before exp consumes invite
+- **Expired**: `410 Gone` if past exp
+- **Already used**: `410 Gone` if pairing already complete
+- **Invalid PSK**: `401 Unauthorized`
 
 ### Protocol: `/glass/inbox/v0`
+
+After pairing, phone uses HTTP-like JSON requests:
 
 | Verb | Description |
 |------|-------------|
@@ -79,15 +101,13 @@ Inbox mints pairing. On startup it prints:
 
 Phone sends `Authorization: Bearer <GLASS_PHONE_TOKEN>` in request headers.
 
-### Private Swarm
-
-- Unpaired peers get `401 Unauthorized`
-- After pairing, only the paired peer can use `/glass/inbox/v0`
-- One-time code: after pair succeeds, code cannot be reused
-
 ### Relay (Optional)
 
-If NAT traversal needs a meeting point, set `GLASS_RELAY_ADDRS` to comma-separated libp2p relay multiaddrs. The inbox is a **circuit-relay client only** — it does NOT run a relay server.
+Set `GLASS_RELAY_ADDRS` to comma-separated libp2p relay multiaddrs for:
+- NAT traversal (hole-punching rendezvous)
+- Short-code-only pairing (`/glass/pair/<code>` topic)
+
+The inbox is a **circuit-relay client only** — it does NOT run a relay server.
 
 ---
 
@@ -95,7 +115,13 @@ If NAT traversal needs a meeting point, set `GLASS_RELAY_ADDRS` to comma-separat
 
 JSON request/response over libp2p streams. Same contract as HTTP v0.
 
-### Request Format
+### Pairing Request (first message, unpaired peer)
+
+```json
+{ "psk": "<64 hex from invite>" }
+```
+
+### Request Format (after pairing)
 
 ```json
 {
@@ -105,12 +131,6 @@ JSON request/response over libp2p streams. Same contract as HTTP v0.
   "body": { ... },
   "query": { "after": "...", "limit": "50" }
 }
-```
-
-### Pairing Request (first message only)
-
-```json
-{ "code": "ABC123" }
 ```
 
 ### Response Format
@@ -191,12 +211,13 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 |----------|----------|---------|-------------|
 | `GLASS_PHONE_TOKEN` | Yes | — | Bearer token for phone role |
 | `GLASS_PANE_TOKEN` | Yes | — | Bearer token for pane role |
-| `GLASS_PAIR_CODE` | No | (minted) | Pairing code (6-8 chars). If not set, inbox mints one. |
-| `GLASS_RELAY_ADDRS` | No | — | Comma-separated relay multiaddrs for NAT traversal |
+| `GLASS_RELAY_ADDRS` | No | — | Comma-separated relay multiaddrs |
 | `GLASS_ENABLE_P2P` | No | `true` | Set to `false` to disable libp2p |
 | `PORT` | No | `3000` | HTTP listen port |
 | `GLASS_P2P_PORT` | No | `4001` | libp2p TCP listen port |
 | `GLASS_DB_PATH` | No | `/data/glass.db` | SQLite database path |
+
+Invite is minted automatically on startup (8-char code + 32-byte PSK + 15-min expiry).
 
 ---
 

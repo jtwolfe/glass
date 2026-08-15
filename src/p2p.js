@@ -9,32 +9,41 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { pipe } from 'it-pipe';
 import * as lp from 'it-length-prefixed';
 import { fromString, toString } from 'uint8arrays';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 
 const INBOX_PROTOCOL = '/glass/inbox/v0';
+const INVITE_VALIDITY_MS = 15 * 60 * 1000;
 
 let node = null;
 let allowedPeers = new Set();
 let pairingComplete = false;
-let pairCode = null;
-let pairingPayload = null;
+let invite = null;
 
-function generatePairCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(6);
+const CROCKFORD_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ2345679';
+
+function generateCode(length = 8) {
+  const bytes = randomBytes(length);
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[bytes[i] % chars.length];
+  for (let i = 0; i < length; i++) {
+    code += CROCKFORD_ALPHABET[bytes[i] % CROCKFORD_ALPHABET.length];
   }
   return code;
 }
 
-export function getPairCode() {
-  return pairCode;
+function generatePsk() {
+  return randomBytes(32);
 }
 
-export function getPairingPayload() {
-  return pairingPayload;
+function pskToHex(psk) {
+  return psk.toString('hex');
+}
+
+function hexToPsk(hex) {
+  return Buffer.from(hex, 'hex');
+}
+
+export function getInvite() {
+  return invite;
 }
 
 export function isPairingComplete() {
@@ -49,19 +58,27 @@ export function allowPeer(peerId) {
   allowedPeers.add(peerId.toString());
 }
 
+function isInviteValid() {
+  if (!invite) return false;
+  return new Date(invite.exp) > new Date();
+}
+
+function verifyPsk(providedPsk) {
+  if (!invite || !isInviteValid()) return false;
+  if (pairingComplete) return false;
+  return providedPsk === invite.psk;
+}
+
 export async function createP2PNode(options = {}) {
   const {
-    code,
     relayAddrs = [],
     listenPort = 4001,
     onInboxRequest,
   } = options;
 
-  pairCode = code || generatePairCode();
-  
-  if (pairCode.length < 6) {
-    throw new Error('Pair code must be at least 6 characters');
-  }
+  const code = generateCode(8);
+  const psk = generatePsk();
+  const exp = new Date(Date.now() + INVITE_VALIDITY_MS).toISOString();
 
   const relayMultiaddrs = relayAddrs
     .filter(a => a && a.trim())
@@ -110,13 +127,31 @@ export async function createP2PNode(options = {}) {
       const request = JSON.parse(toString(chunks[0]));
       
       if (!isPeerAllowed(remotePeer)) {
-        if (request.code === pairCode && !pairingComplete) {
+        if (request.psk && verifyPsk(request.psk)) {
           allowPeer(remotePeer);
           pairingComplete = true;
           console.log(`Paired with peer: ${remotePeer.toString()}`);
           
           await pipe(
             [fromString(JSON.stringify({ status: 200, body: { paired: true } }))],
+            lp.encode,
+            stream.sink
+          );
+          return;
+        }
+        
+        if (request.psk && !isInviteValid()) {
+          await pipe(
+            [fromString(JSON.stringify({ status: 410, body: { error: 'Invite expired' } }))],
+            lp.encode,
+            stream.sink
+          );
+          return;
+        }
+        
+        if (request.psk && pairingComplete) {
+          await pipe(
+            [fromString(JSON.stringify({ status: 410, body: { error: 'Invite already used' } }))],
             lp.encode,
             stream.sink
           );
@@ -170,12 +205,14 @@ export async function createP2PNode(options = {}) {
 
   const addrs = node.getMultiaddrs().map(a => a.toString());
   
-  pairingPayload = {
+  invite = {
     v: 0,
     peer: node.peerId.toString(),
     addrs: addrs,
     proto: INBOX_PROTOCOL,
-    code: pairCode,
+    code: code,
+    psk: pskToHex(psk),
+    exp: exp,
   };
 
   return node;
@@ -191,8 +228,7 @@ export async function stopP2PNode() {
     node = null;
     allowedPeers.clear();
     pairingComplete = false;
-    pairCode = null;
-    pairingPayload = null;
+    invite = null;
   }
 }
 
@@ -201,9 +237,8 @@ export function getNodeInfo() {
   return {
     peerId: node.peerId.toString(),
     addrs: node.getMultiaddrs().map(a => a.toString()),
-    pairCode,
+    invite,
     pairingComplete,
     allowedPeers: Array.from(allowedPeers),
-    pairingPayload,
   };
 }

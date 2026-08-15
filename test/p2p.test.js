@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createP2PNode, stopP2PNode, isPeerAllowed, allowPeer, getNodeInfo, getPairingPayload } from '../src/p2p.js';
+import { createP2PNode, stopP2PNode, isPeerAllowed, allowPeer, getNodeInfo, getInvite } from '../src/p2p.js';
 import { initDb, closeDb } from '../src/db.js';
 
 const PHONE_TOKEN = 'test-phone-token';
 const PANE_TOKEN = 'test-pane-token';
-const TEST_CODE = 'ABC123';
 
 process.env.GLASS_PHONE_TOKEN = PHONE_TOKEN;
 process.env.GLASS_PANE_TOKEN = PANE_TOKEN;
@@ -23,23 +22,7 @@ describe('P2P Node', () => {
     await stopP2PNode();
   });
 
-  it('uses provided pair code', async () => {
-    const { handleInboxRequest } = await import('../src/inbox-handler.js');
-    
-    await createP2PNode({
-      code: TEST_CODE,
-      listenPort: 0,
-      onInboxRequest: handleInboxRequest,
-    });
-
-    const info = getNodeInfo();
-    expect(info.pairCode).toBe(TEST_CODE);
-    expect(info.pairingComplete).toBe(false);
-    expect(info.peerId).toBeDefined();
-    expect(info.addrs.length).toBeGreaterThan(0);
-  });
-
-  it('generates pair code if not provided', async () => {
+  it('generates invite with correct format', async () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
@@ -47,44 +30,67 @@ describe('P2P Node', () => {
       onInboxRequest: handleInboxRequest,
     });
 
-    const info = getNodeInfo();
-    expect(info.pairCode).toBeDefined();
-    expect(info.pairCode.length).toBe(6);
+    const invite = getInvite();
+    expect(invite.v).toBe(0);
+    expect(invite.peer).toBeDefined();
+    expect(invite.addrs).toBeInstanceOf(Array);
+    expect(invite.addrs.length).toBeGreaterThan(0);
+    expect(invite.proto).toBe('/glass/inbox/v0');
+    expect(invite.code).toBeDefined();
+    expect(invite.psk).toBeDefined();
+    expect(invite.exp).toBeDefined();
   });
 
-  it('rejects pair code shorter than 6 chars', async () => {
-    const { handleInboxRequest } = await import('../src/inbox-handler.js');
-    
-    await expect(createP2PNode({
-      code: 'ABC',
-      listenPort: 0,
-      onInboxRequest: handleInboxRequest,
-    })).rejects.toThrow('Pair code must be at least 6 characters');
-  });
-
-  it('generates glass-pair/v0 payload', async () => {
+  it('generates 8-char Crockford code', async () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
-      code: TEST_CODE,
       listenPort: 0,
       onInboxRequest: handleInboxRequest,
     });
 
-    const payload = getPairingPayload();
-    expect(payload.v).toBe(0);
-    expect(payload.peer).toBeDefined();
-    expect(payload.addrs).toBeInstanceOf(Array);
-    expect(payload.addrs.length).toBeGreaterThan(0);
-    expect(payload.proto).toBe('/glass/inbox/v0');
-    expect(payload.code).toBe(TEST_CODE);
+    const invite = getInvite();
+    expect(invite.code.length).toBe(8);
+    expect(invite.code).toMatch(/^[ABCDEFGHJKMNPQRSTVWXYZ2345679]+$/);
+  });
+
+  it('generates 64-char hex PSK (32 bytes)', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const invite = getInvite();
+    expect(invite.psk.length).toBe(64);
+    expect(invite.psk).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it('sets exp to ~15 minutes in future', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    const before = Date.now();
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+    const after = Date.now();
+
+    const invite = getInvite();
+    const expTime = new Date(invite.exp).getTime();
+    
+    const minExp = before + 14 * 60 * 1000;
+    const maxExp = after + 16 * 60 * 1000;
+    
+    expect(expTime).toBeGreaterThan(minExp);
+    expect(expTime).toBeLessThan(maxExp);
   });
 
   it('initially has no allowed peers', async () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
-      code: TEST_CODE,
       listenPort: 0,
       onInboxRequest: handleInboxRequest,
     });
@@ -98,7 +104,6 @@ describe('P2P Node', () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
-      code: TEST_CODE,
       listenPort: 0,
       onInboxRequest: handleInboxRequest,
     });
@@ -113,11 +118,10 @@ describe('P2P Node', () => {
     expect(info.allowedPeers).toContain('12D3KooWFakePeerId123');
   });
 
-  it('rejects peers that are not allowlisted via isPeerAllowed', async () => {
+  it('rejects peers not allowlisted via isPeerAllowed', async () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
-      code: TEST_CODE,
       listenPort: 0,
       onInboxRequest: handleInboxRequest,
     });
@@ -126,17 +130,30 @@ describe('P2P Node', () => {
     expect(isPeerAllowed(unknownPeer)).toBe(false);
   });
 
-  it('listens on specified port', async () => {
+  it('listens on TCP', async () => {
     const { handleInboxRequest } = await import('../src/inbox-handler.js');
     
     await createP2PNode({
-      code: TEST_CODE,
       listenPort: 0,
       onInboxRequest: handleInboxRequest,
     });
 
     const info = getNodeInfo();
     expect(info.addrs.some(a => a.includes('/tcp/'))).toBe(true);
+  });
+
+  it('includes invite in node info', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const info = getNodeInfo();
+    expect(info.invite).toBeDefined();
+    expect(info.invite.code).toBeDefined();
+    expect(info.invite.psk).toBeDefined();
   });
 });
 
