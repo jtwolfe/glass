@@ -22,14 +22,17 @@ import kotlin.coroutines.resume
  * LAN discovery for glass-pair v1 using mDNS/NSD.
  *
  * Service type: _glass-pair._tcp.
- * Instance name: <64 hex peer id> (SHA-256 of plugin Ed25519 device public key)
+ * Instance name: <52 char unpadded base32 of 32-byte device id>
+ *   (DNS labels max at 63 chars; 64-hex would fail on Avahi/NsdManager)
  *
  * Discovery flow:
- * 1. Phone scans v1 QR → gets peer (64 hex), pub (64 hex), code (8 Crockford), exp
- * 2. Phone browses _glass-pair._tcp. on LAN
- * 3. If instance name equals peer: found plugin on LAN
- * 4. Store resolved host in memory only (never git)
- * 5. If nothing found in ~10s: fail-closed, "Plugin not on this LAN"
+ * 1. Phone scans v1 QR → gets peer (52-char base32 or 64-hex), pub, code, exp
+ * 2. Phone derives 52-char base32 mDNS instance name from peer
+ * 3. Phone browses _glass-pair._tcp. on LAN
+ * 4. If instance name equals target: found plugin on LAN
+ * 5. Take host:port from NSD advertisement only (no baked values)
+ * 6. Store resolved host in memory only (never git)
+ * 7. If nothing found in ~10s: fail-closed, "Plugin not on this LAN"
  */
 class LanDiscovery(private val context: Context) {
 
@@ -47,19 +50,19 @@ class LanDiscovery(private val context: Context) {
         get() = resolvedHost
 
     /**
-     * Browse for plugin advertising the given peer ID on LAN.
+     * Browse for plugin advertising the given instance name on LAN.
      * Timeout after ~10 seconds if not found.
      *
-     * @param targetPeer 64 hex peer ID from v1 QR
+     * @param instanceName 52-char unpadded base32 mDNS instance name (from invite.mdnsInstanceName)
      * @return ResolvedPlugin if found, null otherwise
      */
-    suspend fun discoverPlugin(targetPeer: String): ResolvedPlugin? =
+    suspend fun discoverPlugin(instanceName: String): ResolvedPlugin? =
         withContext(Dispatchers.IO) {
             _state.value = DiscoveryState.Searching
             resolvedHost = null
 
             val result = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) {
-                discoverPluginInternal(targetPeer.lowercase())
+                discoverPluginInternal(instanceName.uppercase())
             }
 
             if (result != null) {
@@ -72,7 +75,7 @@ class LanDiscovery(private val context: Context) {
             result
         }
 
-    private suspend fun discoverPluginInternal(targetPeer: String): ResolvedPlugin? =
+    private suspend fun discoverPluginInternal(targetInstanceName: String): ResolvedPlugin? =
         suspendCancellableCoroutine { cont ->
             var listener: NsdManager.DiscoveryListener? = null
             var resolved = false
@@ -95,7 +98,7 @@ class LanDiscovery(private val context: Context) {
                         }
                         cont.resume(
                             ResolvedPlugin(
-                                peer = targetPeer,
+                                instanceName = targetInstanceName,
                                 host = host.hostAddress ?: host.canonicalHostName,
                                 port = port,
                             )
@@ -118,8 +121,8 @@ class LanDiscovery(private val context: Context) {
                 override fun onServiceFound(serviceInfo: NsdServiceInfo?) {
                     if (resolved || serviceInfo == null) return
 
-                    val serviceName = serviceInfo.serviceName?.lowercase() ?: ""
-                    if (serviceName == targetPeer || serviceName.startsWith(targetPeer)) {
+                    val serviceName = serviceInfo.serviceName?.uppercase() ?: ""
+                    if (serviceName == targetInstanceName) {
                         try {
                             nsdManager.resolveService(serviceInfo, resolveListener)
                         } catch (_: Exception) {
@@ -177,9 +180,10 @@ class LanDiscovery(private val context: Context) {
 
 /**
  * Resolved plugin host info (memory only, never persisted to git).
+ * host:port taken from NSD advertisement only.
  */
 data class ResolvedPlugin(
-    val peer: String,
+    val instanceName: String,
     val host: String,
     val port: Int,
 )

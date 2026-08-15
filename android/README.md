@@ -17,17 +17,18 @@ Nash owns this client. Plugin is the pair target. Phone scans only. No container
 4. **Scan the plugin v1 QR** in Settings → Pair Plugin. The QR is raw JSON (UTF-8, not a URL):
 
    ```json
-   {"v":1,"peer":"<64 hex>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>"}
+   {"v":1,"peer":"<52 char base32>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>"}
    ```
 
-   - `peer`: SHA-256 hex of the plugin Ed25519 device public key (64 hex chars)
-   - `pub`: X25519 ephemeral provision public key (64 hex chars)
+   - `peer`: 52-char unpadded RFC 4648 base32 of 32-byte device id (or 64-hex for old mints)
+   - `pub`: X25519 ephemeral provision public key (64 hex chars, stored encrypted)
    - `code`: 8-char Crockford code (A-HJ-NP-Z2-9, no I L O 0 1)
    - `exp`: ISO-8601 expiration (~15 min)
    - No `addrs`, no `psk`. Phone does NOT mint.
 
 5. **Phone browses `_glass-pair._tcp.`** on LAN to find the plugin.
-   - Prefers instance name matching `peer` (64 hex)
+   - Instance name = 52-char unpadded base32 (DNS labels max 63; 64-hex would fail)
+   - Takes host:port from NSD advertisement only (no baked values)
    - Skips loopback (127.x), docker bridge (172.17.x)
    - If not found in ~10s: **fail-closed** — "Plugin not on this LAN"
    - If found: "Found plugin on LAN — waiting for pair accept"
@@ -52,7 +53,9 @@ The phone browses for mDNS service type:
 _glass-pair._tcp.
 ```
 
-The plugin should advertise the same service type with instance name = peer (64 hex).
+The plugin advertises the same service type with:
+- Instance name = 52-char unpadded base32 of 32-byte device id (DNS label max 63)
+- host:port from NSD advertisement (phone does not bake any port)
 
 ---
 

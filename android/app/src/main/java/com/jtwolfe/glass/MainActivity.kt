@@ -262,6 +262,7 @@ class MainActivity : ComponentActivity() {
 
             if (invite.isV1) {
                 // v1: Start LAN discovery for _glass-pair._tcp.
+                // Instance name is 52-char unpadded base32 (DNS label max 63)
                 Toast.makeText(
                     this@MainActivity,
                     "Searching for plugin on LAN...",
@@ -272,7 +273,7 @@ class MainActivity : ComponentActivity() {
                 lanDiscovery = discovery
 
                 val resolved = withContext(Dispatchers.IO) {
-                    discovery.discoverPlugin(invite.peer)
+                    discovery.discoverPlugin(invite.mdnsInstanceName)
                 }
 
                 if (resolved != null) {
