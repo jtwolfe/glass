@@ -19,9 +19,11 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       containers:
         - name: glass-inbox
-          image: YOUR_REGISTRY/glass-inbox:TAG
+          image: ghcr.io/jtwolfe/glass-inbox:0.1.0
           ports:
             - containerPort: 3000
               protocol: TCP

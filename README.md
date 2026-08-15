@@ -209,7 +209,7 @@ npm test
 Build the image locally:
 
 ```bash
-docker build -t glass-inbox .
+docker build -t ghcr.io/jtwolfe/glass-inbox:0.1.0 .
 ```
 
 Run locally:
@@ -220,7 +220,7 @@ docker run -d \
   -e GLASS_PHONE_TOKEN=your-phone-token \
   -e GLASS_PANE_TOKEN=your-pane-token \
   -v glass-data:/data \
-  glass-inbox
+  ghcr.io/jtwolfe/glass-inbox:0.1.0
 ```
 
 The container:
@@ -231,19 +231,32 @@ The container:
 
 ### Kubernetes
 
-Manifests are in `k8s/`. To deploy:
+Manifests are in `k8s/`. Image is hosted on GHCR (private):
 
-1. Build and push the image to your registry:
-
-```bash
-docker build -t glass-inbox .
-docker tag glass-inbox YOUR_REGISTRY/glass-inbox:TAG
-docker push YOUR_REGISTRY/glass-inbox:TAG
+```
+ghcr.io/jtwolfe/glass-inbox:0.1.0
+ghcr.io/jtwolfe/glass-inbox:latest
 ```
 
-2. Update `k8s/deployment.yaml` with your image reference.
+To deploy:
 
-3. Create the secrets (copy and edit the example):
+1. Create the image pull secret (private GHCR needs auth):
+
+```bash
+# Option A: Using gh CLI (if authenticated)
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=$(gh api user --jq .login) \
+  --docker-password=$(gh auth token)
+
+# Option B: Using a GitHub PAT with read:packages scope
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GITHUB_PAT
+```
+
+2. Create the app secrets (copy and edit the example):
 
 ```bash
 cp k8s/secret.example.yaml k8s/secret.yaml
@@ -251,7 +264,7 @@ cp k8s/secret.example.yaml k8s/secret.yaml
 # DO NOT commit secret.yaml
 ```
 
-4. Apply:
+3. Apply:
 
 ```bash
 kubectl apply -f k8s/pvc.yaml
@@ -265,8 +278,24 @@ The deployment:
 - PVC for `/data` (SQLite + TTS cache)
 - Liveness/readiness probes on `/v0/health`
 - Optional secret mounts for xAI/Grok credentials
+- imagePullSecret for private GHCR image
 
 TLS/Ingress is your responsibility — configure at your cluster level.
+
+### Building the Image
+
+To build and push locally (requires write access to GHCR):
+
+```bash
+docker build -t ghcr.io/jtwolfe/glass-inbox:0.1.0 .
+docker tag ghcr.io/jtwolfe/glass-inbox:0.1.0 ghcr.io/jtwolfe/glass-inbox:latest
+
+# Login to GHCR
+echo $GITHUB_PAT | docker login ghcr.io -u YOUR_USERNAME --password-stdin
+
+docker push ghcr.io/jtwolfe/glass-inbox:0.1.0
+docker push ghcr.io/jtwolfe/glass-inbox:latest
+```
 
 ### Environment Variables
 
