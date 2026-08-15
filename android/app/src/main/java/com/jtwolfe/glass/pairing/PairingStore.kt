@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
@@ -169,7 +170,29 @@ data class PairingInvite(
     val mdnsInstanceName: String
         get() = peerBase32 ?: peer
 
+    /**
+     * Compute ntfy topic for v1 signaling.
+     * topic = lowercase hex( SHA-256( UTF-8( "glass-pair/v1\n" + peer + "\n" + pub + "\n" + code ) ) )
+     * 64 hex chars, unguessable from 8-char code alone.
+     *
+     * Returns null for v0 invites (no pub field).
+     */
+    val ntfyTopic: String?
+        get() {
+            if (version != 1) return null
+            val pubHex = pub ?: return null
+            return computeNtfyTopic(peer, pubHex, code)
+        }
+
     companion object {
+        private const val NTFY_TOPIC_PREFIX = "glass-pair/v1"
+
+        fun computeNtfyTopic(peer: String, pub: String, code: String): String {
+            val input = "$NTFY_TOPIC_PREFIX\n$peer\n$pub\n$code"
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
+            return hash.joinToString("") { "%02x".format(it) }
+        }
         private val HEX_64_REGEX = Regex("^[a-fA-F0-9]{64}$")
         private val BASE32_52_REGEX = Regex("^[a-z2-7]{52}$")
         private val CROCKFORD_8_REGEX = Regex("^[A-HJ-NP-Z2-9]{8}$", RegexOption.IGNORE_CASE)

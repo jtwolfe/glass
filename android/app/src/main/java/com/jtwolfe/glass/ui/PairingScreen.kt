@@ -239,8 +239,8 @@ fun PairingScreen(
             Spacer(Modifier.weight(1f))
 
             Text(
-                "After scanning a v1 invite, the phone browses _glass-pair._tcp. on LAN to find the plugin. " +
-                    "Off-LAN connections fail closed.",
+                "After scanning a v1 invite, the phone connects via ntfy.sh signaling to establish a " +
+                    "WebRTC DataChannel. Chat never goes through ntfy. Hard NAT fails closed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

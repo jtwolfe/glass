@@ -31,6 +31,7 @@ import com.jtwolfe.glass.pairing.DiscoveryState
 import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.pairing.PluginResult
+import com.jtwolfe.glass.rtc.ConnectResult
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
@@ -262,74 +263,62 @@ class MainActivity : ComponentActivity() {
             pairing = invite
 
             if (invite.isV1) {
-                // v1: Start LAN discovery for _glass-pair._tcp.
-                // Instance name is 52-char unpadded base32 (DNS label max 63)
+                // v1: Use ntfy.sh for WebRTC signaling (not LAN discovery)
+                // Topic = SHA-256("glass-pair/v1\n" + peer + "\n" + pub + "\n" + code)
+                // Chat NEVER goes to ntfy - only WebRTC offer/answer/ICE
                 Toast.makeText(
                     this@MainActivity,
-                    "Searching for plugin on LAN...",
+                    "Connecting via ntfy signaling...",
                     Toast.LENGTH_SHORT,
                 ).show()
 
-                val discovery = LanDiscovery(this@MainActivity)
-                lanDiscovery = discovery
-
-                val resolved = withContext(Dispatchers.IO) {
-                    discovery.discoverPlugin(invite.mdnsInstanceName)
-                }
-
-                if (resolved != null) {
-                    // TCP connect to resolved host:port and send pairing code
+                val webRtc = app.createWebRtcConnection(invite)
+                if (webRtc == null) {
                     Toast.makeText(
                         this@MainActivity,
-                        "Pairing with plugin...",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-
-                    val pairResult = withContext(Dispatchers.IO) {
-                        app.pluginClient.connectAndPair(
-                            host = resolved.host,
-                            port = resolved.port,
-                            code = invite.shortCode,
-                        )
-                    }
-
-                    when (pairResult) {
-                        is PluginResult.Success -> {
-                            chatViewModel.onPluginConnected()
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Paired with plugin",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        is PluginResult.Timeout -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Pairing timed out. Plugin may have closed the connection.",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                        is PluginResult.Rejected -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Pairing rejected: ${pairResult.reason}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                        is PluginResult.Error -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Pairing failed: ${pairResult.message}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    }
-                } else {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Plugin not on this LAN. Make sure the plugin is running on the same network.",
+                        "Invalid v1 invite: missing pub field",
                         Toast.LENGTH_LONG,
                     ).show()
+                    return@launch
+                }
+
+                val connectResult = withContext(Dispatchers.IO) {
+                    webRtc.connect()
+                }
+
+                when (connectResult) {
+                    is ConnectResult.Success -> {
+                        chatViewModel.onWebRtcConnected()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Connected via WebRTC DataChannel",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    is ConnectResult.AlreadyConnected -> {
+                        chatViewModel.onWebRtcConnected()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Already connected",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    is ConnectResult.Timeout -> {
+                        app.closeWebRtcConnection()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Connection timed out. Plugin may not be reachable (hard NAT).",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    is ConnectResult.Error -> {
+                        app.closeWebRtcConnection()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Connection failed: ${connectResult.message}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
             } else {
                 // v0 (legacy): PSK-based P2P dial
@@ -393,7 +382,9 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val app = application as GlassApplication
             app.pairingStore.clear()
+            app.closeWebRtcConnection()
             app.pluginClient.disconnect()
+            chatViewModel.onWebRtcDisconnected()
             chatViewModel.onPluginDisconnected()
             lanDiscovery?.reset()
             lanDiscovery = null

@@ -11,6 +11,7 @@ import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
 import com.jtwolfe.glass.pairing.PluginClient
+import com.jtwolfe.glass.rtc.WebRtcPeerConnection
 import com.jtwolfe.glass.voice.XaiVoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +43,7 @@ class ChatViewModel(
     private val repository: ChatRepository,
     private val xaiAuthStore: XaiAuthStore,
     private val pluginClient: PluginClient? = null,
+    private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
     private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
 ) : AndroidViewModel(application) {
 
@@ -55,11 +57,14 @@ class ChatViewModel(
     private var afterCursor: String = EPOCH
     private var lastSpokenAt: String = EPOCH
 
+    private val isWebRtcConnected: Boolean
+        get() = webRtcConnectionProvider?.invoke()?.isConnected == true
+
     private val isPluginConnected: Boolean
         get() = pluginClient?.isConnected == true && pluginClient.isPaired
 
     private val canSendRemote: Boolean
-        get() = isPluginConnected || _state.value.inbox.isHttpConfigured
+        get() = isWebRtcConnected || isPluginConnected || _state.value.inbox.isHttpConfigured
 
     init {
         viewModelScope.launch {
@@ -74,9 +79,10 @@ class ChatViewModel(
                     ui.copy(
                         inbox = config,
                         status = when {
+                            isWebRtcConnected -> "Plugin connected (WebRTC DataChannel)"
                             isPluginConnected -> "Plugin connected (v1 TCP)"
                             config.isHttpConfigured -> "Inbox HTTP (${config.source})"
-                            else -> "Local-only — v1 pairing uses LAN discovery"
+                            else -> "Local-only — scan QR to connect via ntfy"
                         },
                     )
                 }
@@ -123,8 +129,34 @@ class ChatViewModel(
         _state.update { ui ->
             ui.copy(
                 status = when {
+                    isWebRtcConnected -> "Plugin connected (WebRTC DataChannel)"
                     config.isHttpConfigured -> "Inbox HTTP (${config.source})"
-                    else -> "Local-only — v1 pairing uses LAN discovery"
+                    else -> "Local-only — scan QR to connect via ntfy"
+                },
+            )
+        }
+        restartPolling(config)
+    }
+
+    fun onWebRtcConnected() {
+        val config = _state.value.inbox
+        _state.update { ui ->
+            ui.copy(
+                status = "Plugin connected (WebRTC DataChannel)",
+            )
+        }
+        restartPolling(config)
+        viewModelScope.launch { refreshRemote(config) }
+    }
+
+    fun onWebRtcDisconnected() {
+        val config = _state.value.inbox
+        _state.update { ui ->
+            ui.copy(
+                status = when {
+                    isPluginConnected -> "Plugin connected (v1 TCP)"
+                    config.isHttpConfigured -> "Inbox HTTP (${config.source})"
+                    else -> "Local-only — scan QR to connect via ntfy"
                 },
             )
         }
@@ -292,6 +324,7 @@ class ChatViewModel(
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     val app = application as GlassApplication
+                    val webRtcProvider: () -> WebRtcPeerConnection? = { app.webRtcConnection }
                     return ChatViewModel(
                         application = app,
                         settings = app.inboxSettings,
@@ -299,9 +332,11 @@ class ChatViewModel(
                             context = app,
                             streamClient = app.inboxStreamClient,
                             pluginClient = app.pluginClient,
+                            webRtcConnectionProvider = webRtcProvider,
                         ),
                         xaiAuthStore = app.xaiAuthStore,
                         pluginClient = app.pluginClient,
+                        webRtcConnectionProvider = webRtcProvider,
                     ) as T
                 }
             }

@@ -248,7 +248,7 @@ private fun PairingSection(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     val statusText = if (pairing.isV1) {
-                        "v1 paired — LAN discovery active"
+                        "v1 paired — WebRTC via ntfy signaling"
                     } else {
                         "v0 paired (legacy P2P stream)"
                     }
@@ -269,11 +269,13 @@ private fun PairingSection(
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                     if (pairing.isV1) {
-                        Text(
-                            "Browsing _glass-pair._tcp. on LAN",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
+                        pairing.ntfyTopic?.let { topic ->
+                            Text(
+                                "Topic: ${topic.take(16)}...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
                     } else if (pairing.hasCircuitRelay) {
                         Text(
                             "Circuit relay available",
@@ -285,7 +287,7 @@ private fun PairingSection(
             }
             if (pairing.isV1) {
                 Text(
-                    "v1 pairing uses LAN discovery. Off-LAN connections fail closed.",
+                    "v1 uses WebRTC DataChannel via ntfy.sh signaling. Chat never goes to ntfy. Hard NAT fails closed.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
@@ -302,7 +304,7 @@ private fun PairingSection(
             }
         } else {
             Text(
-                "Pair with the plugin to enable LAN communication. " +
+                "Pair with the plugin to connect via WebRTC. " +
                     "Scan the v1 QR code from the plugin.",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -351,7 +353,7 @@ private fun AdvancedHttpsSection(
         AnimatedVisibility(visible = expanded) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "HTTP inbox is parked. v1 pairing uses LAN discovery instead. " +
+                    "HTTP inbox is parked. v1 pairing uses ntfy.sh WebRTC signaling instead. " +
                         "Token may be needed for future bearer auth. URL is optional.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -384,7 +386,7 @@ private fun AdvancedHttpsSection(
                     Text("Save")
                 }
                 Text(
-                    "v1 pairing browses _glass-pair._tcp. on LAN. HTTP inbox is not required.",
+                    "v1 pairing connects via ntfy.sh and WebRTC DataChannel. HTTP inbox is not required.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

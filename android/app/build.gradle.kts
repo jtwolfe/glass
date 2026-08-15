@@ -118,4 +118,7 @@ dependencies {
 
     // Guava (needed by jvm-libp2p and CameraX - use Android variant)
     implementation("com.google.guava:guava:33.3.1-android")
+
+    // WebRTC for ntfy-based DataChannel pairing
+    implementation("io.getstream:stream-webrtc-android:1.3.7")
 }

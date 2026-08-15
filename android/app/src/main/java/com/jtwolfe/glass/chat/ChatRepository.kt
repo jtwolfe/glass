@@ -12,6 +12,9 @@ import com.jtwolfe.glass.p2p.StreamResponse
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.pairing.RepliesResult
 import com.jtwolfe.glass.pairing.SendResult
+import com.jtwolfe.glass.rtc.DataChannelRepliesResult
+import com.jtwolfe.glass.rtc.DataChannelSendResult
+import com.jtwolfe.glass.rtc.WebRtcPeerConnection
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -23,6 +26,7 @@ class ChatRepository(
     private val client: InboxClient = InboxClient(),
     private val streamClient: InboxStreamClient? = null,
     private val pluginClient: PluginClient? = null,
+    private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
 ) {
     private val messagesKey = stringPreferencesKey("messages_json")
 
@@ -36,7 +40,26 @@ class ChatRepository(
     }
 
     suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> {
-        // v1: Use PluginClient TCP socket when paired (never /v0/messages)
+        // v1 WebRTC: Use DataChannel when connected (chat never goes to ntfy)
+        val webRtc = webRtcConnectionProvider?.invoke()
+        if (webRtc != null && webRtc.isConnected) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = webRtc.replies(after = after, limit = 50, token = token)
+            if (result is DataChannelRepliesResult.Success) {
+                return result.messages
+                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
+                    .map { msg ->
+                        V0Message(
+                            id = msg.id.takeIf { it.isNotBlank() },
+                            from = msg.from,
+                            text = msg.text,
+                            at = msg.at,
+                        )
+                    }
+            }
+        }
+
+        // v1 LAN (parked): Use PluginClient TCP socket when paired
         val plugin = pluginClient
         if (plugin != null && plugin.isConnected && plugin.isPaired) {
             val token = config.token.takeIf { it.isNotBlank() }
@@ -73,7 +96,27 @@ class ChatRepository(
     }
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message {
-        // v1: Use PluginClient TCP socket when paired (from=jamie only, never ashleigh)
+        // v1 WebRTC: Use DataChannel when connected (from=jamie only, chat never goes to ntfy)
+        val webRtc = webRtcConnectionProvider?.invoke()
+        if (webRtc != null && webRtc.isConnected) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = webRtc.send(
+                from = "jamie",
+                text = message.text,
+                at = message.at,
+                token = token,
+            )
+            if (result is DataChannelSendResult.Success) {
+                return V0Message(
+                    id = result.id.takeIf { it.isNotBlank() },
+                    from = result.from,
+                    text = result.text,
+                    at = result.at,
+                )
+            }
+        }
+
+        // v1 LAN (parked): Use PluginClient TCP socket when paired
         val plugin = pluginClient
         if (plugin != null && plugin.isConnected && plugin.isPaired) {
             val token = config.token.takeIf { it.isNotBlank() }
