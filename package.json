@@ -1,7 +1,7 @@
 {
   "name": "glass-inbox",
   "version": "0.1.0",
-  "description": "Public HTTPS inbox API for glass",
+  "description": "P2P inbox for glass with libp2p pairing",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["glass", "inbox", "api"],
+  "keywords": ["glass", "inbox", "api", "libp2p", "p2p"],
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
@@ -17,7 +17,18 @@
   "dependencies": {
     "@hono/node-server": "^1.13.1",
     "hono": "^4.6.9",
-    "better-sqlite3": "^11.5.0"
+    "better-sqlite3": "^11.5.0",
+    "@libp2p/tcp": "^11.0.26",
+    "@libp2p/yamux": "^8.0.1",
+    "@libp2p/identify": "^4.1.12",
+    "@libp2p/dcutr": "^3.0.26",
+    "@libp2p/circuit-relay-v2": "^4.2.11",
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "libp2p": "^3.3.8",
+    "@multiformats/multiaddr": "^12.3.1",
+    "it-pipe": "^3.0.1",
+    "it-length-prefixed": "^9.1.0",
+    "uint8arrays": "^5.1.0"
   },
   "devDependencies": {
     "vitest": "^2.1.4"

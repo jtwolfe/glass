@@ -11,5 +11,9 @@ spec:
       targetPort: 3000
       protocol: TCP
       name: http
+    - port: 4001
+      targetPort: 4001
+      protocol: TCP
+      name: libp2p
   selector:
     app: glass-inbox

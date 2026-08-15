@@ -25,25 +25,23 @@ spec:
         - name: glass-inbox
           image: ghcr.io/jtwolfe/glass-inbox:0.1.0
           ports:
-            - containerPort: 3000
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: libp2p
+              containerPort: 4001
               protocol: TCP
           env:
             - name: GLASS_DB_PATH
               value: /data/glass.db
-            - name: GROK_AUTH_PATH
-              value: /home/node/.grok/auth.json
+            - name: GLASS_P2P_PORT
+              value: "4001"
           envFrom:
             - secretRef:
-                name: glass-inbox-tokens
+                name: glass-inbox-secrets
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: grok-auth
-              mountPath: /home/node/.grok
-              readOnly: true
-            - name: xai-oauth
-              mountPath: /data/secrets
-              readOnly: true
           livenessProbe:
             httpGet:
               path: /v0/health
@@ -77,11 +75,3 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: glass-inbox-data
-        - name: grok-auth
-          secret:
-            secretName: glass-grok-auth
-            optional: true
-        - name: xai-oauth
-          secret:
-            secretName: glass-xai-oauth
-            optional: true

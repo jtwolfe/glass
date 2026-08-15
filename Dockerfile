@@ -35,9 +35,10 @@ RUN mkdir -p /data/media/tts && chown -R 1000:1000 /data
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV GLASS_P2P_PORT=4001
 ENV GLASS_DB_PATH=/data/glass.db
 
-EXPOSE 3000
+EXPOSE 3000 4001
 
 USER 1000
 
