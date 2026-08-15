@@ -42,14 +42,16 @@ class ChatRepository(
             val token = config.token.takeIf { it.isNotBlank() }
             val result = plugin.replies(after = after, limit = 50, token = token)
             if (result is RepliesResult.Success) {
-                return result.messages.map { msg ->
-                    V0Message(
-                        id = msg.id.takeIf { it.isNotBlank() },
-                        from = msg.from,
-                        text = msg.text,
-                        at = msg.at,
-                    )
-                }
+                return result.messages
+                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
+                    .map { msg ->
+                        V0Message(
+                            id = msg.id.takeIf { it.isNotBlank() },
+                            from = msg.from,
+                            text = msg.text,
+                            at = msg.at,
+                        )
+                    }
             }
         }
 
@@ -71,12 +73,12 @@ class ChatRepository(
     }
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message {
-        // v1: Use PluginClient TCP socket when paired (from=jamie only)
+        // v1: Use PluginClient TCP socket when paired (from=jamie only, never ashleigh)
         val plugin = pluginClient
         if (plugin != null && plugin.isConnected && plugin.isPaired) {
             val token = config.token.takeIf { it.isNotBlank() }
             val result = plugin.send(
-                from = message.from,
+                from = "jamie",
                 text = message.text,
                 at = message.at,
                 token = token,
