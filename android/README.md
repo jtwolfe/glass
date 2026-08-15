@@ -21,10 +21,20 @@ Nash owns this client. Quay owns the public HTTPS inbox. No routing, no other te
 ### Pairing protocol notes
 
 - First `/glass/inbox/v0` frame is `{"psk":"<64 hex>"}` (unsigned-varint length prefix + JSON).
-- HTTPS fallback activates automatically until the P2P stream connects.
+- HTTP/HTTPS fallback activates automatically until the P2P stream connects.
 - **Typed 8-char code pairing** (`/glass/pair/<code>` gossipsub) is **stubbed in this cut** — scan the QR for now.
-- The inbox QR must advertise Jamie's LAN IP (e.g. `192.168.x.x`), not `127.0.0.1`. The client skips loopback and unroutable addrs.
+- The inbox QR must advertise Jamie's LAN IP (e.g. `192.168.x.x`), not `127.0.0.1`. The client skips loopback and unroutable addrs (127.x, 172.17.x docker0).
 - Do not invent `GLASS_RELAY_ADDRS`. Do not put tokens or PSKs in git or the APK.
+
+### Quick start: until the QR advertises a LAN IP
+
+The inbox QR currently lists `127.0.0.1` or `172.17.0.2` (docker0), which are unroutable from the phone. Until the inbox advertises a reachable LAN IP:
+
+1. Open Settings → **Advanced / HTTPS fallback**
+2. Enter the inbox URL (HTTP or HTTPS) and token manually
+3. HTTP is allowed on this debug APK; production builds require HTTPS
+
+**Never commit the inbox URL or token to git or bake them into the APK.**
 
 ---
 

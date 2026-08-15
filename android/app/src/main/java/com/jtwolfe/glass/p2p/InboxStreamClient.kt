@@ -152,6 +152,7 @@ class InboxStreamClient : Closeable {
         val str = ma.toString()
         return str.startsWith("/ip4/127.") ||
             str.startsWith("/ip4/0.0.0.0/") ||
+            str.startsWith("/ip4/172.17.") ||
             str.startsWith("/ip6/::1/") ||
             str.contains("/dns4/localhost/") ||
             str.contains("/dns6/localhost/") ||
