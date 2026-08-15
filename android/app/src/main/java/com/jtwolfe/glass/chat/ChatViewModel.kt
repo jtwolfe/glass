@@ -6,9 +6,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.jtwolfe.glass.GlassApplication
+import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
+import com.jtwolfe.glass.voice.XaiVoiceClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ChatUiState(
     val messages: List<V0Message> = emptyList(),
@@ -35,6 +39,8 @@ class ChatViewModel(
     application: Application,
     private val settings: InboxSettings,
     private val repository: ChatRepository,
+    private val xaiAuthStore: XaiAuthStore,
+    private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -138,17 +144,64 @@ class ChatViewModel(
         _state.update { it.copy(error = null) }
     }
 
+    /**
+     * Fetch reply audio. Prefers xAI TTS when logged in, falls back to inbox audio.
+     */
     suspend fun fetchReplyAudio(id: String): ByteArray? {
         val config = _state.value.inbox
-        if (!config.isConfigured || id.isBlank()) return null
-        return runCatching { repository.fetchReplyAudio(config, id) }.getOrNull()
+        if (id.isBlank()) return null
+
+        // Try inbox audio endpoint first (it may have pre-rendered audio)
+        if (config.isConfigured) {
+            val inboxAudio = runCatching { repository.fetchReplyAudio(config, id) }.getOrNull()
+            if (inboxAudio != null && inboxAudio.isNotEmpty()) {
+                return inboxAudio
+            }
+        }
+
+        return null
     }
 
-    suspend fun transcribeAudio(audio: ByteArray): String? {
-        val config = _state.value.inbox
-        if (!config.isConfigured || audio.isEmpty()) return null
-        return runCatching { repository.transcribe(config, audio) }.getOrNull()
+    /**
+     * Synthesize speech using xAI TTS when logged in.
+     * Returns null if not logged in or on error (caller should use on-device TTS).
+     */
+    suspend fun synthesizeXaiTts(text: String): ByteArray? {
+        if (text.isBlank()) return null
+        val bearer = xaiAuthStore.getFreshAccessToken() ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching { xaiVoiceClient.synthesize(bearer, text) }.getOrNull()
+        }
     }
+
+    /**
+     * Transcribe audio. Prefers xAI STT when logged in, falls back to inbox STT.
+     * Returns null if both fail (caller should use on-device recognition).
+     */
+    suspend fun transcribeAudio(audio: ByteArray): String? {
+        if (audio.isEmpty()) return null
+
+        // Prefer xAI STT when logged in (bearer never leaves the phone)
+        val xaiBearer = xaiAuthStore.getFreshAccessToken()
+        if (xaiBearer != null) {
+            val xaiResult = withContext(Dispatchers.IO) {
+                runCatching { xaiVoiceClient.transcribe(xaiBearer, audio) }.getOrNull()
+            }
+            if (!xaiResult.isNullOrBlank()) {
+                return xaiResult
+            }
+        }
+
+        // Fall back to inbox STT (503 returns null → use on-device)
+        val config = _state.value.inbox
+        if (config.isConfigured) {
+            return runCatching { repository.transcribe(config, audio) }.getOrNull()
+        }
+
+        return null
+    }
+
+    val hasXaiAuth: Boolean get() = xaiAuthStore.isLoggedIn
 
     private suspend fun refreshRemote(config: InboxConfig) {
         runCatching { repository.pullReplies(config, afterCursor) }
@@ -211,6 +264,7 @@ class ChatViewModel(
                         application = app,
                         settings = app.inboxSettings,
                         repository = ChatRepository(app),
+                        xaiAuthStore = app.xaiAuthStore,
                     ) as T
                 }
             }

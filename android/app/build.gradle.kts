@@ -75,4 +75,21 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Encrypted storage for xAI OAuth tokens and pairing PSK
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Chrome Custom Tabs for xAI OAuth browser flow
+    implementation("androidx.browser:browser:1.8.0")
+
+    // ML Kit barcode scanning for glass-pair QR codes
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.camera:camera-core:1.4.0")
+    implementation("androidx.camera:camera-camera2:1.4.0")
+    implementation("androidx.camera:camera-lifecycle:1.4.0")
+    implementation("androidx.camera:camera-view:1.4.0")
+
+    // libp2p stub for future P2P transport (Quay: /glass/inbox/v0 after pair)
+    // TODO(quay): Add io.libp2p:jvm-libp2p when glass-pair swarm is live.
+    // Currently HTTPS inbox remains the transport; P2P is the product path.
 }
