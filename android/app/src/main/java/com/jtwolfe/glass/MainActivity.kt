@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -25,8 +26,12 @@ import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
 import com.jtwolfe.glass.voice.SpeechRecognizerHelper
 import com.jtwolfe.glass.voice.TtsHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -37,6 +42,7 @@ class MainActivity : ComponentActivity() {
 
     private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
+    private var replyPlayer: MediaPlayer? = null
     private var pendingAutoListen = false
 
     private val roleRequest = registerForActivityResult(
@@ -97,8 +103,43 @@ class MainActivity : ComponentActivity() {
         }?.launchIn(lifecycleScope)
 
         chatViewModel.newAshleighMessages.onEach { message ->
-            ttsHelper?.speak(message.text)
+            val id = message.id
+            val mpeg = if (!id.isNullOrBlank()) {
+                withContext(Dispatchers.IO) { chatViewModel.fetchReplyAudio(id) }
+            } else {
+                null
+            }
+            if (mpeg != null && mpeg.isNotEmpty()) {
+                playReplyMpeg(mpeg)
+            } else {
+                ttsHelper?.speak(message.text)
+            }
         }.launchIn(lifecycleScope)
+    }
+
+    private fun playReplyMpeg(bytes: ByteArray) {
+        stopReplyAudio()
+        ttsHelper?.stop()
+        val file = File(cacheDir, "ashleigh-reply.mp3")
+        file.writeBytes(bytes)
+        replyPlayer = MediaPlayer().apply {
+            setDataSource(file.absolutePath)
+            setOnCompletionListener { stopReplyAudio() }
+            setOnErrorListener { _, _, _ ->
+                stopReplyAudio()
+                true
+            }
+            prepare()
+            start()
+        }
+    }
+
+    private fun stopReplyAudio() {
+        replyPlayer?.apply {
+            runCatching { stop() }
+            release()
+        }
+        replyPlayer = null
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -122,11 +163,13 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         speechHelper?.reset()
+        stopReplyAudio()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         speechHelper?.reset()
+        stopReplyAudio()
         ttsHelper?.shutdown()
     }
 
@@ -154,8 +197,8 @@ class MainActivity : ComponentActivity() {
             .setTitle("Talk to Ashleigh")
             .setMessage(
                 "Glass uses the microphone so Jamie can talk to Ashleigh. " +
-                    "Speech is handled on-device by Android's recognizer. " +
-                    "Nothing is sent to a paid cloud STT. The transcript is posted " +
+                    "Speech is handled on-device by Android's recognizer unless " +
+                    "the inbox cloud STT is mounted. The transcript is posted " +
                     "as Jamie's message, same as the keyboard.",
             )
             .setPositiveButton("Allow") { _, _ ->
@@ -170,6 +213,7 @@ class MainActivity : ComponentActivity() {
             requestMicPermission()
             return
         }
+        stopReplyAudio()
         ttsHelper?.stop()
         speechHelper?.startListening()
     }

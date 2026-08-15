@@ -32,4 +32,10 @@ class ChatRepository(
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message =
         client.postMessage(config, message)
+
+    suspend fun transcribe(config: InboxConfig, audio: ByteArray): String? =
+        client.transcribe(config, audio)
+
+    suspend fun fetchReplyAudio(config: InboxConfig, id: String): ByteArray? =
+        client.fetchReplyAudio(config, id)
 }

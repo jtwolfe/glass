@@ -1,6 +1,7 @@
 package com.jtwolfe.glass.inbox
 
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -10,14 +11,18 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
-class InboxException(message: String, cause: Throwable? = null) : IOException(message, cause)
+class InboxException(
+    message: String,
+    val httpCode: Int = 0,
+    cause: Throwable? = null,
+) : IOException(message, cause)
 
 class InboxClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .build(),
 ) {
     fun fetchReplies(config: InboxConfig, after: String, limit: Int = 50): List<V0Message> {
@@ -42,6 +47,47 @@ class InboxClient(
             if (body.isBlank()) message
             else V0Message.fromJson(JSONObject(body)) ?: message
         }
+    }
+
+    /** POST /v0/stt multipart field `file`. 200 {text}. 503 credential_unavailable → null. */
+    fun transcribe(
+        config: InboxConfig,
+        audio: ByteArray,
+        filename: String = "speech.m4a",
+        contentType: String = "audio/mp4",
+    ): String? {
+        val part = MultipartBody.Part.createFormData(
+            "file",
+            filename,
+            audio.toRequestBody(contentType.toMediaType()),
+        )
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addPart(part)
+            .build()
+        val base = config.url.trim().trimEnd('/')
+        val request = Request.Builder()
+            .url("$base/v0/stt")
+            .header("Authorization", "Bearer ${config.token}")
+            .header("Accept", "application/json")
+            .post(body)
+            .build()
+        return executeOptional(request) { text ->
+            JSONObject(text).optString("text").trim().ifEmpty { null }
+        }
+    }
+
+    /** GET /v0/replies/{id}/audio → audio/mpeg. 503 → null (use on-device TTS). */
+    fun fetchReplyAudio(config: InboxConfig, id: String): ByteArray? {
+        val encodedId = URLEncoder.encode(id, StandardCharsets.UTF_8.name())
+        val base = config.url.trim().trimEnd('/')
+        val request = Request.Builder()
+            .url("$base/v0/replies/$encodedId/audio")
+            .header("Authorization", "Bearer ${config.token}")
+            .header("Accept", "audio/mpeg")
+            .get()
+            .build()
+        return executeBytesOptional(request)
     }
 
     fun health(baseUrl: String): Boolean {
@@ -84,14 +130,39 @@ class InboxClient(
             http.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    throw InboxException("Inbox HTTP ${response.code}")
+                    throw InboxException("Inbox HTTP ${response.code}", response.code)
                 }
                 return parse(body)
             }
         } catch (e: InboxException) {
             throw e
         } catch (e: Exception) {
-            throw InboxException(e.message ?: "Inbox unreachable", e)
+            throw InboxException(e.message ?: "Inbox unreachable", cause = e)
+        }
+    }
+
+    private fun <T> executeOptional(request: Request, parse: (String) -> T?): T? {
+        return try {
+            http.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 503) return null
+                if (!response.isSuccessful) return null
+                parse(body)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun executeBytesOptional(request: Request): ByteArray? {
+        return try {
+            http.newCall(request).execute().use { response ->
+                if (response.code == 503) return null
+                if (!response.isSuccessful) return null
+                response.body?.bytes()
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 

@@ -14,22 +14,28 @@ Long-press home (or any assist gesture) opens the Ashleigh chat and **immediatel
 
 ### Microphone permission
 
-The app requests `RECORD_AUDIO` permission when you first try to use voice. A brief rationale explains that Jamie's voice goes to Ashleigh via the on-device speech recognizer.
+The app requests `RECORD_AUDIO` permission when you first try to use voice. A brief rationale explains that Jamie's voice goes to Ashleigh.
 
 ### Hold-to-talk
 
 - **Mic button** in the composer: hold to talk, release to send
 - **On assist open** (long-press home): automatically starts listening
-- Uses Android's built-in `SpeechRecognizer` — system STT only, no paid cloud APIs
-- Partial transcripts appear as you speak; final transcript posts to the inbox just like typed messages
+- Default: Android `SpeechRecognizer` (on-device STT, no paid cloud)
+- Optional: `POST /v0/stt` multipart field `file` → `{text}` when SuperGrok is mounted on the inbox host. `503 credential_unavailable` fails closed to on-device STT. The phone does not send a model name (host sets grok-stt).
+- Final transcript posts to the inbox just like typed messages
 
-### Text-to-speech
+### Spoken replies
 
-When Ashleigh replies (fetched via `GET /v0/replies`), the app speaks her words using Android `TextToSpeech`. TTS stops if you start a new voice input.
+When Ashleigh replies (`GET /v0/replies`):
+
+1. Try `GET /v0/replies/{id}/audio` (audio/mpeg, phone token).
+2. `503 credential_unavailable` or any miss → Android `TextToSpeech` of Ashleigh's text.
+
+TTS / mpeg stops if you start a new voice input.
 
 ### Keyboard fallback
 
-The typed composer remains available for users who prefer typing or when voice is unavailable.
+The typed composer remains available.
 
 ## Inbox v0 (phone)
 
@@ -42,7 +48,9 @@ Contract message:
 Phone paths (Quay):
 
 - `POST {base}/v0/messages` — send. Body always `"from":"jamie"`. Expect 201 `{id,from,text,at}`.
-- `GET {base}/v0/replies?after=<ISO-8601>&limit=50` — poll Ashleigh replies while assist is open. `after` is exclusive on `at`. Expect 200 `{messages:[...]}`.
+- `GET {base}/v0/replies?after=<ISO-8601>&limit=50` — poll Ashleigh replies. `after` is exclusive on `at`. Expect 200 `{messages:[...]}`.
+- `POST {base}/v0/stt` — multipart `file=<audio>`. 200 `{text}`. 503 → on-device STT.
+- `GET {base}/v0/replies/{id}/audio` — audio/mpeg. 503 → on-device TTS.
 - `GET {base}/v0/health` — no auth, `{ok:true}`.
 - `Authorization: Bearer <token>` (`GLASS_PHONE_TOKEN` via `local.properties`).
 
@@ -50,10 +58,10 @@ Do **not** call `GET /v0/messages`. That path is pane-only (Ashleigh).
 
 Configure **outside git**:
 
-1. Copy `local.properties.example` → `local.properties` and set `glass.inbox.url` / `glass.inbox.token` (baked into `BuildConfig` at compile time), **and/or**
+1. Copy `local.properties.example` → `local.properties` and set `glass.inbox.url` / `glass.inbox.token`, **and/or**
 2. Enter URL + token on the in-app Settings screen (DataStore, device-only).
 
-Runtime settings override BuildConfig when non-empty. If both are unset, chat stays **local-only** on device (POST stub, no poll). Network errors never crash the app. Public HTTPS host is TBD — do not point this at localhost for the Grok Bot path.
+Runtime settings override BuildConfig when non-empty. If both are unset, chat stays **local-only**. Network errors never crash the app. Do not commit the live tunnel URL or token.
 
 ## How to run
 
@@ -64,10 +72,10 @@ Runtime settings override BuildConfig when non-empty. If both are unset, chat st
    gradle wrapper --gradle-version 8.11.1
    ```
 
-   or let Android Studio create `gradle/wrapper/gradle-wrapper.jar`. That jar is binary and is not in git.
+   or let Android Studio create `gradle/wrapper/gradle-wrapper.jar`.
 3. Set `sdk.dir`, `glass.inbox.url`, and `glass.inbox.token` in `local.properties`.
-4. Sideload the debug APK.
-5. Grant Glass as the default assistant (Settings in-app, or system assistant settings).
+4. Sideload the debug APK (or the GitHub Release `apk-debug-0.1.0`).
+5. Grant Glass as the default assistant.
 6. Long-press home to open Ashleigh.
 
 ## Layout

@@ -138,6 +138,18 @@ class ChatViewModel(
         _state.update { it.copy(error = null) }
     }
 
+    suspend fun fetchReplyAudio(id: String): ByteArray? {
+        val config = _state.value.inbox
+        if (!config.isConfigured || id.isBlank()) return null
+        return runCatching { repository.fetchReplyAudio(config, id) }.getOrNull()
+    }
+
+    suspend fun transcribeAudio(audio: ByteArray): String? {
+        val config = _state.value.inbox
+        if (!config.isConfigured || audio.isEmpty()) return null
+        return runCatching { repository.transcribe(config, audio) }.getOrNull()
+    }
+
     private suspend fun refreshRemote(config: InboxConfig) {
         runCatching { repository.pullReplies(config, afterCursor) }
             .onSuccess { remote ->
