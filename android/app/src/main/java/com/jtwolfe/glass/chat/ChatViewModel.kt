@@ -10,6 +10,7 @@ import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
+import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.voice.XaiVoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +41,7 @@ class ChatViewModel(
     private val settings: InboxSettings,
     private val repository: ChatRepository,
     private val xaiAuthStore: XaiAuthStore,
+    private val pluginClient: PluginClient? = null,
     private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
 ) : AndroidViewModel(application) {
 
@@ -52,6 +54,12 @@ class ChatViewModel(
     private var pollJob: Job? = null
     private var afterCursor: String = EPOCH
     private var lastSpokenAt: String = EPOCH
+
+    private val isPluginConnected: Boolean
+        get() = pluginClient?.isConnected == true && pluginClient.isPaired
+
+    private val canSendRemote: Boolean
+        get() = isPluginConnected || _state.value.inbox.isHttpConfigured
 
     init {
         viewModelScope.launch {
@@ -66,13 +74,14 @@ class ChatViewModel(
                     ui.copy(
                         inbox = config,
                         status = when {
+                            isPluginConnected -> "Plugin connected (v1 TCP)"
                             config.isHttpConfigured -> "Inbox HTTP (${config.source})"
                             else -> "Local-only — v1 pairing uses LAN discovery"
                         },
                     )
                 }
                 restartPolling(config)
-                if (config.isHttpConfigured) {
+                if (canSendRemote) {
                     refreshRemote(config)
                 }
             }
@@ -98,9 +107,33 @@ class ChatViewModel(
         refresh()
     }
 
+    fun onPluginConnected() {
+        val config = _state.value.inbox
+        _state.update { ui ->
+            ui.copy(
+                status = "Plugin connected (v1 TCP)",
+            )
+        }
+        restartPolling(config)
+        viewModelScope.launch { refreshRemote(config) }
+    }
+
+    fun onPluginDisconnected() {
+        val config = _state.value.inbox
+        _state.update { ui ->
+            ui.copy(
+                status = when {
+                    config.isHttpConfigured -> "Inbox HTTP (${config.source})"
+                    else -> "Local-only — v1 pairing uses LAN discovery"
+                },
+            )
+        }
+        restartPolling(config)
+    }
+
     fun refresh() {
         val config = _state.value.inbox
-        if (config.isHttpConfigured) {
+        if (canSendRemote) {
             viewModelScope.launch { refreshRemote(config) }
         }
     }
@@ -120,7 +153,7 @@ class ChatViewModel(
             }
             persistLocal()
             val config = _state.value.inbox
-            if (config.isHttpConfigured) {
+            if (canSendRemote) {
                 runCatching { repository.sendRemote(config, outgoing) }
                     .onFailure { err ->
                         _state.update {
@@ -230,7 +263,7 @@ class ChatViewModel(
 
     private fun restartPolling(config: InboxConfig) {
         pollJob?.cancel()
-        if (!config.isHttpConfigured) return
+        if (!canSendRemote) return
         pollJob = viewModelScope.launch {
             while (isActive) {
                 delay(8_000)
@@ -262,8 +295,13 @@ class ChatViewModel(
                     return ChatViewModel(
                         application = app,
                         settings = app.inboxSettings,
-                        repository = ChatRepository(app, streamClient = app.inboxStreamClient),
+                        repository = ChatRepository(
+                            context = app,
+                            streamClient = app.inboxStreamClient,
+                            pluginClient = app.pluginClient,
+                        ),
                         xaiAuthStore = app.xaiAuthStore,
+                        pluginClient = app.pluginClient,
                     ) as T
                 }
             }

@@ -30,8 +30,7 @@ import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.DiscoveryState
 import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
-import com.jtwolfe.glass.pairing.TcpPairResult
-import com.jtwolfe.glass.pairing.TcpPairing
+import com.jtwolfe.glass.pairing.PluginResult
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
@@ -287,32 +286,37 @@ class MainActivity : ComponentActivity() {
                     ).show()
 
                     val pairResult = withContext(Dispatchers.IO) {
-                        TcpPairing.pair(resolved.host, resolved.port, invite.shortCode)
+                        app.pluginClient.connectAndPair(
+                            host = resolved.host,
+                            port = resolved.port,
+                            code = invite.shortCode,
+                        )
                     }
 
                     when (pairResult) {
-                        is TcpPairResult.Success -> {
+                        is PluginResult.Success -> {
+                            chatViewModel.onPluginConnected()
                             Toast.makeText(
                                 this@MainActivity,
                                 "Paired with plugin",
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
-                        is TcpPairResult.Timeout -> {
+                        is PluginResult.Timeout -> {
                             Toast.makeText(
                                 this@MainActivity,
                                 "Pairing timed out. Plugin may have closed the connection.",
                                 Toast.LENGTH_LONG,
                             ).show()
                         }
-                        is TcpPairResult.Rejected -> {
+                        is PluginResult.Rejected -> {
                             Toast.makeText(
                                 this@MainActivity,
                                 "Pairing rejected: ${pairResult.reason}",
                                 Toast.LENGTH_LONG,
                             ).show()
                         }
-                        is TcpPairResult.Error -> {
+                        is PluginResult.Error -> {
                             Toast.makeText(
                                 this@MainActivity,
                                 "Pairing failed: ${pairResult.message}",
@@ -389,6 +393,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val app = application as GlassApplication
             app.pairingStore.clear()
+            app.pluginClient.disconnect()
+            chatViewModel.onPluginDisconnected()
             lanDiscovery?.reset()
             lanDiscovery = null
             pairing = null

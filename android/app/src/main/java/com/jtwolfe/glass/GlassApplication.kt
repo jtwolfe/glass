@@ -5,6 +5,7 @@ import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.p2p.InboxStreamClient
 import com.jtwolfe.glass.pairing.PairingStore
+import com.jtwolfe.glass.pairing.PluginClient
 
 class GlassApplication : Application() {
     lateinit var inboxSettings: InboxSettings
@@ -18,6 +19,8 @@ class GlassApplication : Application() {
 
     val inboxStreamClient: InboxStreamClient by lazy { InboxStreamClient() }
 
+    val pluginClient: PluginClient by lazy { PluginClient() }
+
     override fun onCreate() {
         super.onCreate()
         inboxSettings = InboxSettings(this)
@@ -28,5 +31,6 @@ class GlassApplication : Application() {
     override fun onTerminate() {
         super.onTerminate()
         inboxStreamClient.close()
+        pluginClient.close()
     }
 }

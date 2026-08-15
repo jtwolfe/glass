@@ -9,6 +9,9 @@ import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.V0Message
 import com.jtwolfe.glass.p2p.InboxStreamClient
 import com.jtwolfe.glass.p2p.StreamResponse
+import com.jtwolfe.glass.pairing.PluginClient
+import com.jtwolfe.glass.pairing.RepliesResult
+import com.jtwolfe.glass.pairing.SendResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -19,6 +22,7 @@ class ChatRepository(
     private val context: Context,
     private val client: InboxClient = InboxClient(),
     private val streamClient: InboxStreamClient? = null,
+    private val pluginClient: PluginClient? = null,
 ) {
     private val messagesKey = stringPreferencesKey("messages_json")
 
@@ -32,7 +36,24 @@ class ChatRepository(
     }
 
     suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> {
-        // Use P2P stream if connected, otherwise fall back to HTTPS
+        // v1: Use PluginClient TCP socket when paired (never /v0/messages)
+        val plugin = pluginClient
+        if (plugin != null && plugin.isConnected && plugin.isPaired) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = plugin.replies(after = after, limit = 50, token = token)
+            if (result is RepliesResult.Success) {
+                return result.messages.map { msg ->
+                    V0Message(
+                        id = msg.id.takeIf { it.isNotBlank() },
+                        from = msg.from,
+                        text = msg.text,
+                        at = msg.at,
+                    )
+                }
+            }
+        }
+
+        // v0: Use P2P stream if connected, otherwise fall back to HTTPS
         val stream = streamClient
         if (stream != null && stream.isConnected && stream.isPaired) {
             val response = stream.getReplies(config.token, after)
@@ -44,7 +65,27 @@ class ChatRepository(
     }
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message {
-        // Use P2P stream if connected, otherwise fall back to HTTPS
+        // v1: Use PluginClient TCP socket when paired (from=jamie only)
+        val plugin = pluginClient
+        if (plugin != null && plugin.isConnected && plugin.isPaired) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = plugin.send(
+                from = message.from,
+                text = message.text,
+                at = message.at,
+                token = token,
+            )
+            if (result is SendResult.Success) {
+                return V0Message(
+                    id = result.id.takeIf { it.isNotBlank() },
+                    from = result.from,
+                    text = result.text,
+                    at = result.at,
+                )
+            }
+        }
+
+        // v0: Use P2P stream if connected, otherwise fall back to HTTPS
         val stream = streamClient
         if (stream != null && stream.isConnected && stream.isPaired) {
             val response = stream.postMessage(
