@@ -481,3 +481,115 @@ describe('GET /v0/replies', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /v0/stt', () => {
+  it('returns 401 without auth', async () => {
+    const res = await app.request('/v0/stt', { method: 'POST' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for pane token', async () => {
+    const formData = new FormData();
+    formData.append('file', new Blob(['test'], { type: 'audio/wav' }), 'test.wav');
+    
+    const res = await app.request('/v0/stt', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+      body: formData,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 400 without multipart form data', async () => {
+    const res = await app.request('/v0/stt', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PHONE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 503 when no grok credential available', async () => {
+    const formData = new FormData();
+    formData.append('file', new Blob(['test audio data'], { type: 'audio/wav' }), 'test.wav');
+    
+    const res = await app.request('/v0/stt', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+      body: formData,
+    });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('credential_unavailable');
+  });
+});
+
+describe('GET /v0/replies/:id/audio', () => {
+  it('returns 401 without auth', async () => {
+    const res = await app.request('/v0/replies/some-id/audio');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for pane token', async () => {
+    const res = await app.request('/v0/replies/some-id/audio', {
+      headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 404 for non-existent message', async () => {
+    const res = await app.request('/v0/replies/non-existent-id/audio', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 403 for jamie messages (ashleigh only)', async () => {
+    const createRes = await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PHONE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'jamie',
+        text: 'Hello',
+        at: '2024-01-15T10:30:00Z',
+      }),
+    });
+    const { id } = await createRes.json();
+
+    const res = await app.request(`/v0/replies/${id}/audio`, {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('Forbidden: audio only available for ashleigh messages');
+  });
+
+  it('returns 503 when no grok credential available for ashleigh message', async () => {
+    const createRes = await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PANE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ashleigh',
+        text: 'Hi there',
+        at: '2024-01-15T10:30:00Z',
+      }),
+    });
+    const { id } = await createRes.json();
+
+    const res = await app.request(`/v0/replies/${id}/audio`, {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('credential_unavailable');
+  });
+});

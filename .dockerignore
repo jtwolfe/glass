@@ -1,0 +1,13 @@
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+data/
+.git/
+.gitignore
+test/
+vitest.config.js
+k8s/
+*.md

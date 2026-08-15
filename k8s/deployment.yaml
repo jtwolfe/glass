@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glass-inbox
+  labels:
+    app: glass-inbox
+spec:
+  replicas: 1  # SQLite is not multi-writer
+  selector:
+    matchLabels:
+      app: glass-inbox
+  template:
+    metadata:
+      labels:
+        app: glass-inbox
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: glass-inbox
+          image: YOUR_REGISTRY/glass-inbox:TAG
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: GLASS_DB_PATH
+              value: /data/glass.db
+            - name: GROK_AUTH_PATH
+              value: /home/node/.grok/auth.json
+          envFrom:
+            - secretRef:
+                name: glass-inbox-tokens
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: grok-auth
+              mountPath: /home/node/.grok
+              readOnly: true
+            - name: xai-oauth
+              mountPath: /data/secrets
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /v0/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v0/health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: glass-inbox-data
+        - name: grok-auth
+          secret:
+            secretName: glass-grok-auth
+            optional: true
+        - name: xai-oauth
+          secret:
+            secretName: glass-xai-oauth
+            optional: true

@@ -79,6 +79,11 @@ export function listReplies({ after, limit = 50 }) {
   return getDb().prepare(query).all(...params);
 }
 
+export function getMessageById(id) {
+  const stmt = getDb().prepare('SELECT id, sender as "from", text, at FROM messages WHERE id = ?');
+  return stmt.get(id) || null;
+}
+
 export function closeDb() {
   if (db) {
     db.close();

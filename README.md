@@ -124,6 +124,35 @@ Response `200 OK`:
 }
 ```
 
+#### `POST /v0/stt`
+
+Speech-to-text transcription. **Phone token only.**
+
+Request: `multipart/form-data` with a `file` field containing audio.
+
+Response `200 OK`:
+
+```json
+{ "text": "transcribed text here" }
+```
+
+Errors:
+- `503`: No xAI/Grok credential available (`{"error": "credential_unavailable", "detail": "..."}`)
+
+#### `GET /v0/replies/:id/audio`
+
+Text-to-speech for Ashleigh messages. **Phone token only.** Returns audio for the specified message ID. Only works for messages where `from=ashleigh`.
+
+Response `200 OK`: `audio/mpeg` binary data.
+
+Headers:
+- `X-Cache: HIT` or `X-Cache: MISS`
+
+Errors:
+- `404`: Message not found
+- `403`: Message is not from Ashleigh
+- `503`: No xAI/Grok credential available
+
 ### Authentication
 
 All endpoints except `/v0/health` require a Bearer token in the `Authorization` header:
@@ -136,8 +165,8 @@ Two tokens are configured via environment variables:
 
 | Environment Variable | Role | Permissions |
 |---------------------|------|-------------|
-| `GLASS_PHONE_TOKEN` | phone | POST as `jamie` only; GET `/v0/replies` (poll for ashleigh replies) |
-| `GLASS_PANE_TOKEN` | pane | POST as `ashleigh` only; GET `/v0/messages` (full transcript) |
+| `GLASS_PHONE_TOKEN` | phone | POST as `jamie`; GET `/v0/replies`; POST `/v0/stt`; GET `/v0/replies/:id/audio` |
+| `GLASS_PANE_TOKEN` | pane | POST as `ashleigh`; GET `/v0/messages` (full transcript) |
 
 Responses:
 - `401 Unauthorized`: Missing or invalid token
@@ -145,21 +174,24 @@ Responses:
 
 Both tokens must be set and non-empty at process start.
 
+### STT/TTS Credentials
+
+The STT and TTS endpoints call xAI APIs (`https://api.x.ai/v1/stt` and `/v1/tts`). They require a credential file:
+
+1. **xAI OAuth** (preferred): Mount at `/data/secrets/oauth.json`
+2. **Grok auth** (fallback): Mount at `/home/node/.grok/auth.json` or set `GROK_AUTH_PATH`
+
+If no credential is available, STT/TTS endpoints return `503` but the container still starts and `/v0/health` works.
+
 ### Running Locally
 
 ```bash
-# Install dependencies
 npm install
 
-# Set required environment variables
 export GLASS_PHONE_TOKEN=your-phone-token
 export GLASS_PANE_TOKEN=your-pane-token
 
-# Start the server (defaults to port 3000)
 npm start
-
-# Or specify a port
-PORT=8080 npm start
 ```
 
 ### Running Tests
@@ -168,29 +200,88 @@ PORT=8080 npm start
 npm test
 ```
 
-### Deployment
+---
 
-Build and run with Docker:
+## Deployment
+
+### Docker
+
+Build the image locally:
 
 ```bash
 docker build -t glass-inbox .
+```
 
+Run locally:
+
+```bash
 docker run -d \
   -p 3000:3000 \
   -e GLASS_PHONE_TOKEN=your-phone-token \
   -e GLASS_PANE_TOKEN=your-pane-token \
-  -v glass-data:/app/glass.db \
+  -v glass-data:/data \
   glass-inbox
 ```
 
-The service stores messages in SQLite (`glass.db`). Mount a volume to persist data across container restarts.
+The container:
+- Runs as non-root (uid 1000)
+- Stores SQLite at `/data/glass.db`
+- Caches TTS audio at `/data/media/tts/`
+- Requires `GLASS_PHONE_TOKEN` and `GLASS_PANE_TOKEN` at runtime
 
-Optional environment variables:
-- `PORT`: HTTP port (default `3000`)
-- `GLASS_DB_PATH`: Path to SQLite database file (default `./glass.db`)
+### Kubernetes
 
-Deploy to any public HTTPS host (e.g., Railway, Fly.io, Cloud Run). Configure TLS at the load balancer or reverse proxy level.
+Manifests are in `k8s/`. To deploy:
 
-### Future: MCP Integration
+1. Build and push the image to your registry:
+
+```bash
+docker build -t glass-inbox .
+docker tag glass-inbox YOUR_REGISTRY/glass-inbox:TAG
+docker push YOUR_REGISTRY/glass-inbox:TAG
+```
+
+2. Update `k8s/deployment.yaml` with your image reference.
+
+3. Create the secrets (copy and edit the example):
+
+```bash
+cp k8s/secret.example.yaml k8s/secret.yaml
+# Edit k8s/secret.yaml with real token values
+# DO NOT commit secret.yaml
+```
+
+4. Apply:
+
+```bash
+kubectl apply -f k8s/pvc.yaml
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+```
+
+The deployment:
+- Single replica (SQLite is not multi-writer)
+- PVC for `/data` (SQLite + TTS cache)
+- Liveness/readiness probes on `/v0/health`
+- Optional secret mounts for xAI/Grok credentials
+
+TLS/Ingress is your responsibility — configure at your cluster level.
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GLASS_PHONE_TOKEN` | Yes | — | Bearer token for phone role |
+| `GLASS_PANE_TOKEN` | Yes | — | Bearer token for pane role |
+| `PORT` | No | `3000` | HTTP listen port |
+| `GLASS_DB_PATH` | No | `/data/glass.db` | SQLite database path |
+| `GROK_AUTH_PATH` | No | `~/.grok/auth.json` | Path to Grok auth file |
+| `XAI_OAUTH_PATH` | No | `/data/secrets/oauth.json` | Path to xAI OAuth file |
+| `TTS_CACHE_DIR` | No | `/data/media/tts` | TTS audio cache directory |
+
+---
+
+## Future: MCP Integration
 
 A later MCP server will expose the inbox to the glass Cursor plugin via `GLASS_MCP_URL`. This is not implemented in this repo yet.

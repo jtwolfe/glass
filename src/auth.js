@@ -64,3 +64,11 @@ export function canGetMessages(role) {
 export function canGetReplies(role) {
   return role === 'phone';
 }
+
+export function canUseStt(role) {
+  return role === 'phone';
+}
+
+export function canGetAudio(role) {
+  return role === 'phone';
+}

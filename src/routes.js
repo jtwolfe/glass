@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
-import { createMessage, listMessages, listReplies } from './db.js';
-import { authMiddleware, canPost, canGetMessages, canGetReplies } from './auth.js';
+import { createMessage, listMessages, listReplies, getMessageById } from './db.js';
+import { authMiddleware, canPost, canGetMessages, canGetReplies, canUseStt, canGetAudio } from './auth.js';
+import { speechToText, textToSpeech } from './media.js';
 
 const VALID_SENDERS = ['jamie', 'ashleigh'];
 
@@ -112,6 +113,83 @@ export function createApp() {
     
     const messages = listReplies({ after, limit });
     return c.json({ messages });
+  });
+  
+  api.get('/replies/:id/audio', async (c) => {
+    const role = c.get('role');
+    
+    if (!canGetAudio(role)) {
+      return c.json({ error: 'Forbidden: cannot get audio' }, 403);
+    }
+    
+    const id = c.req.param('id');
+    const message = getMessageById(id);
+    
+    if (!message) {
+      return c.json({ error: 'Message not found' }, 404);
+    }
+    
+    if (message.from !== 'ashleigh') {
+      return c.json({ error: 'Forbidden: audio only available for ashleigh messages' }, 403);
+    }
+    
+    const result = await textToSpeech(id, message.text);
+    
+    if (result.error === 'credential_unavailable') {
+      return c.json({ error: result.error, detail: result.detail }, 503);
+    }
+    
+    if (result.error) {
+      return c.json({ error: result.error, detail: result.detail }, 502);
+    }
+    
+    return new Response(result.audioBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': result.audioBuffer.length.toString(),
+        'X-Cache': result.cached ? 'HIT' : 'MISS',
+      },
+    });
+  });
+  
+  api.post('/stt', async (c) => {
+    const role = c.get('role');
+    
+    if (!canUseStt(role)) {
+      return c.json({ error: 'Forbidden: cannot use STT' }, 403);
+    }
+    
+    const contentType = c.req.header('Content-Type') || '';
+    
+    if (!contentType.includes('multipart/form-data')) {
+      return c.json({ error: 'Content-Type must be multipart/form-data' }, 400);
+    }
+    
+    let formData;
+    try {
+      formData = await c.req.formData();
+    } catch {
+      return c.json({ error: 'Invalid multipart form data' }, 400);
+    }
+    
+    const file = formData.get('file');
+    if (!file || !(file instanceof File)) {
+      return c.json({ error: "Missing 'file' in form data" }, 400);
+    }
+    
+    const audioBuffer = Buffer.from(await file.arrayBuffer());
+    const result = await speechToText(audioBuffer, file.type);
+    
+    if (result.error === 'credential_unavailable') {
+      return c.json({ error: result.error, detail: result.detail }, 503);
+    }
+    
+    if (result.error) {
+      return c.json({ error: result.error, detail: result.detail }, 502);
+    }
+    
+    return c.json({ text: result.text });
   });
   
   app.route('/v0', api);
