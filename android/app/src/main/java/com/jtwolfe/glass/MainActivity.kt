@@ -26,6 +26,7 @@ import com.jtwolfe.glass.auth.DeviceCodeResponse
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
+import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
@@ -251,13 +252,64 @@ class MainActivity : ComponentActivity() {
     private fun savePairing(invite: PairingInvite) {
         lifecycleScope.launch {
             val app = application as GlassApplication
+
+            // First save the invite
             app.pairingStore.save(invite)
             pairing = invite
-            Toast.makeText(
-                this@MainActivity,
-                "Paired with inbox",
-                Toast.LENGTH_SHORT,
-            ).show()
+
+            // If PSK is available, dial and perform the stream handshake
+            val psk = invite.psk
+            if (psk != null && invite.addrs.isNotEmpty()) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Connecting to inbox P2P...",
+                    Toast.LENGTH_SHORT,
+                ).show()
+
+                val streamClient = app.inboxStreamClient
+                withContext(Dispatchers.IO) {
+                    streamClient.start()
+                }
+
+                val result = withContext(Dispatchers.IO) {
+                    streamClient.dialAndPair(
+                        peerId = invite.peer,
+                        addrs = invite.addrs,
+                        psk = psk,
+                        exp = invite.exp,
+                    )
+                }
+
+                when (result) {
+                    is PairResult.Success -> {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Paired with inbox (P2P connected)",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    is PairResult.Expired -> {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Invite expired. Please scan a new QR code.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    is PairResult.Error -> {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Paired (HTTPS fallback): ${result.message}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            } else {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Paired with inbox (HTTPS fallback)",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
     }
 

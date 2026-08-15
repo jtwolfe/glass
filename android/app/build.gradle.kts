@@ -56,6 +56,30 @@ android {
         compose = true
         buildConfig = true
     }
+
+    packaging {
+        resources {
+            excludes += listOf(
+                "META-INF/license/**",
+                "META-INF/INDEX.LIST",
+                "META-INF/*.kotlin_module",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+                "META-INF/ASL2.0",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/versions/**",
+                "META-INF/native-image/**",
+            )
+            pickFirsts += listOf(
+                "META-INF/services/*",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -89,7 +113,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.0")
     implementation("androidx.camera:camera-view:1.4.0")
 
-    // libp2p stub for future P2P transport (Quay: /glass/inbox/v0 after pair)
-    // TODO(quay): Add io.libp2p:jvm-libp2p when glass-pair swarm is live.
-    // Currently HTTPS inbox remains the transport; P2P is the product path.
+    // libp2p for P2P transport (Quay: /glass/inbox/v0 after pair)
+    implementation("io.libp2p:jvm-libp2p:1.3.5-RELEASE")
+
+    // Guava (needed by jvm-libp2p and CameraX - use Android variant)
+    implementation("com.google.guava:guava:33.3.1-android")
 }

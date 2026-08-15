@@ -248,7 +248,7 @@ private fun PairingSection(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Paired (HTTPS fallback until swarm is live)",
+                        "Paired (P2P stream active after QR dial)",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -273,7 +273,7 @@ private fun PairingSection(
                 }
             }
             Text(
-                "Product path is P2P. The swarm will activate once Quay locks the transport.",
+                "Chat uses P2P stream when connected. Falls back to HTTPS if stream drops.",
                 style = MaterialTheme.typography.bodySmall,
             )
             OutlinedButton(

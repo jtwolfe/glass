@@ -37,7 +37,61 @@ TTS / mpeg stops if you start a new voice input.
 
 The typed composer remains available.
 
-## Inbox v0 (phone)
+## P2P Stream (glass-pair/v0)
+
+After scanning the inbox QR code, the phone dials the inbox via libp2p and opens the `/glass/inbox/v0` stream protocol.
+
+### Pairing handshake
+
+1. Phone scans QR → parses `{v,peer,addrs,proto,code,psk,exp}`.
+2. Phone dials inbox multiaddrs (TCP + Noise + Mplex).
+3. Opens stream `/glass/inbox/v0`.
+4. First frame: `{"psk":"<64 hex from QR>"}` (unsigned-varint length-prefixed JSON).
+5. Inbox verifies PSK and replies: `{status:200,body:{paired:true}}`.
+6. Subsequent frames: HTTP-like verbs with `Authorization: Bearer $GLASS_PHONE_TOKEN`.
+
+### Frame format
+
+All frames are **unsigned-varint** (multiformats) length prefix followed by UTF-8 JSON bytes. Same format in both directions.
+
+### Stream API
+
+After pairing, the stream accepts JSON requests:
+
+- `POST /v0/messages {from,text,at}` → `{status:201,body:{id,from,text,at}}`
+- `GET /v0/replies?after=&limit=50` → `{status:200,body:{messages:[...]}}`
+- `GET /v0/health` → `{status:200,body:{ok:true}}`
+
+Each request includes `"authorization":"Bearer <token>"` in the JSON (the inbox phone token from Settings, NOT the xAI bearer).
+
+### Transport fallback
+
+If the P2P stream fails to connect or drops, the app falls back to HTTPS. The stream client automatically reconnects on next send/poll.
+
+### Typed-code pairing (needs relay)
+
+When the user types the 8-char Crockford code instead of scanning QR:
+
+1. Phone subscribes to gossipsub topic `/glass/pair/<CODE>`.
+2. Inbox publishes the full glass-pair/v0 JSON as raw UTF-8 bytes (NOT varint-prefixed).
+3. Phone parses the invite and performs the same dial + PSK handshake.
+
+**Blocker**: Typed-code path requires a relay multiaddr configured. Without relay, users must scan the QR code. The gossipsub subscription is stubbed pending inbox PR #3 relay availability.
+
+### jvm-libp2p on Android
+
+The app uses `io.libp2p:jvm-libp2p:1.3.5-RELEASE` for P2P transport. This compiles and runs on Android (minSdk 29+). The library provides:
+
+- TCP transport
+- Noise security (NoiseXXSecureChannel)
+- Mplex stream multiplexing
+- Gossipsub pubsub (API integrated, typed-code path stubbed)
+
+No custom PSK/pnet is used — the PSK is sent as the first-frame payload for pairing verification.
+
+---
+
+## Inbox v0 (HTTPS fallback)
 
 Contract message:
 

@@ -169,8 +169,8 @@ fun PairingScreen(
 
             if (!relayConfigured) {
                 Text(
-                    "No relay configured. Short-code pairing requires a relay. " +
-                        "Please scan the QR code instead.",
+                    "Short-code pairing requires a relay multiaddr. " +
+                        "Scan the QR code instead (works without relay).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -181,10 +181,10 @@ fun PairingScreen(
                     if (shortCode.length < 6) {
                         error = "Code must be at least 6 characters"
                     } else if (!relayConfigured) {
-                        error = "Configure a relay in Settings to use short codes"
+                        error = "No relay configured. Scan the QR code instead."
                     } else {
-                        error = "Short-code pairing via relay is not yet implemented. " +
-                            "Please scan the QR code."
+                        error = "Typed-code pairing subscribes to /glass/pair/<code>. " +
+                            "This path is ready when inbox PR #3 relay is live."
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

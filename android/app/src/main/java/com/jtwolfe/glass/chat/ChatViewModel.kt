@@ -263,7 +263,7 @@ class ChatViewModel(
                     return ChatViewModel(
                         application = app,
                         settings = app.inboxSettings,
-                        repository = ChatRepository(app),
+                        repository = ChatRepository(app, streamClient = app.inboxStreamClient),
                         xaiAuthStore = app.xaiAuthStore,
                     ) as T
                 }
