@@ -231,11 +231,13 @@ describe('POST /v0/messages', () => {
 });
 
 describe('GET /v0/messages', () => {
-  it('returns 403 for phone token', async () => {
+  it('allows phone token to GET (poll for ashleigh replies)', async () => {
     const res = await app.request('/v0/messages', {
       headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toEqual([]);
   });
 
   it('returns empty array when no messages', async () => {

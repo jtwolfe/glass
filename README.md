@@ -113,12 +113,12 @@ Two tokens are configured via environment variables:
 
 | Environment Variable | Role | Permissions |
 |---------------------|------|-------------|
-| `GLASS_PHONE_TOKEN` | phone | POST messages as `jamie` only |
-| `GLASS_PANE_TOKEN` | pane | GET all messages; POST messages as `ashleigh` only |
+| `GLASS_PHONE_TOKEN` | phone | POST as `jamie` only; GET messages (poll for ashleigh replies) |
+| `GLASS_PANE_TOKEN` | pane | POST as `ashleigh` only; GET messages |
 
 Responses:
 - `401 Unauthorized`: Missing or invalid token
-- `403 Forbidden`: Token valid but wrong role for the operation
+- `403 Forbidden`: Token valid but wrong `from` value for POST
 
 Both tokens must be set and non-empty at process start.
 

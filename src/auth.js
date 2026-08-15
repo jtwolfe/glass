@@ -58,5 +58,5 @@ export function canPost(role, from) {
 }
 
 export function canGet(role) {
-  return role === 'pane';
+  return role === 'phone' || role === 'pane';
 }
