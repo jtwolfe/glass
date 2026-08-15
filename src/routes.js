@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { createMessage, listMessages, listReplies, getMessageById } from './db.js';
-import { authMiddleware, canPost, canGetMessages, canGetReplies, canUseStt, canGetAudio } from './auth.js';
+import { authMiddleware, canPost, canGetMessages, canGetReplies, canUseStt, canGetAudio, getTokenRole } from './auth.js';
 import { speechToText, textToSpeech } from './media.js';
+import { getInvite } from './p2p.js';
 
 const VALID_SENDERS = ['jamie', 'ashleigh'];
 
@@ -38,6 +39,38 @@ export function createApp() {
   
   app.get('/v0/health', (c) => {
     return c.json({ ok: true });
+  });
+  
+  app.get('/v0/pair', (c) => {
+    const authHeader = c.req.header('Authorization');
+    const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1] || null;
+    const role = getTokenRole(token);
+    
+    const remoteIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() 
+      || c.req.header('x-real-ip')
+      || c.env?.incoming?.socket?.remoteAddress
+      || '';
+    const isLoopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteIp);
+    
+    if (role === 'phone') {
+      return c.json({ error: 'Forbidden: phone token cannot access pair endpoint' }, 403);
+    }
+    
+    if (role !== 'pane' && !isLoopback) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    
+    const invite = getInvite();
+    if (!invite) {
+      return c.json({ error: 'No active invite' }, 404);
+    }
+    
+    const expDate = new Date(invite.exp);
+    if (expDate <= new Date()) {
+      return c.json({ error: 'Invite expired' }, 410);
+    }
+    
+    return c.json(invite);
   });
   
   const api = new Hono();

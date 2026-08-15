@@ -8,6 +8,7 @@ import { handleInboxRequest } from './inbox-handler.js';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const P2P_PORT = parseInt(process.env.GLASS_P2P_PORT || '4001', 10);
 const RELAY_ADDRS = (process.env.GLASS_RELAY_ADDRS || '').split(',').filter(Boolean);
+const ANNOUNCE_ADDRS = (process.env.GLASS_ANNOUNCE_ADDRS || '').split(',').filter(Boolean);
 const ENABLE_P2P = process.env.GLASS_ENABLE_P2P !== 'false';
 
 try {
@@ -28,6 +29,7 @@ if (ENABLE_P2P) {
   try {
     await createP2PNode({
       relayAddrs: RELAY_ADDRS,
+      announceAddrs: ANNOUNCE_ADDRS,
       listenPort: P2P_PORT,
       onInboxRequest: handleInboxRequest,
     });

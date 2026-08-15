@@ -593,3 +593,78 @@ describe('GET /v0/replies/:id/audio', () => {
     expect(body.error).toBe('credential_unavailable');
   });
 });
+
+describe('GET /v0/pair (no P2P)', () => {
+  it('returns 404 when no invite (P2P not started)', async () => {
+    const res = await app.request('/v0/pair', {
+      headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('No active invite');
+  });
+
+  it('returns 403 for phone token', async () => {
+    const res = await app.request('/v0/pair', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('Forbidden: phone token cannot access pair endpoint');
+  });
+
+  it('returns 401 with invalid token (not loopback)', async () => {
+    const res = await app.request('/v0/pair', {
+      headers: { Authorization: 'Bearer invalid-token' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 without auth (not loopback)', async () => {
+    const res = await app.request('/v0/pair');
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('GET /v0/pair (with P2P)', () => {
+  let p2pApp;
+  
+  beforeAll(async () => {
+    const { createP2PNode, stopP2PNode } = await import('../src/p2p.js');
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+    
+    p2pApp = createApp();
+  });
+  
+  afterAll(async () => {
+    const { stopP2PNode } = await import('../src/p2p.js');
+    await stopP2PNode();
+  });
+
+  it('returns invite with pane token', async () => {
+    const res = await p2pApp.request('/v0/pair', {
+      headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.v).toBe(0);
+    expect(body.peer).toBeDefined();
+    expect(body.addrs).toBeInstanceOf(Array);
+    expect(body.proto).toBe('/glass/inbox/v0');
+    expect(body.code).toBeDefined();
+    expect(body.psk).toBeDefined();
+    expect(body.exp).toBeDefined();
+  });
+
+  it('returns 403 for phone token even with active invite', async () => {
+    const res = await p2pApp.request('/v0/pair', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+});

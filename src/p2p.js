@@ -101,6 +101,7 @@ async function publishInviteOnce() {
 export async function createP2PNode(options = {}) {
   const {
     relayAddrs = [],
+    announceAddrs = [],
     listenPort = 4001,
     onInboxRequest,
     pubsubImpl,
@@ -246,12 +247,22 @@ export async function createP2PNode(options = {}) {
     }
   }
 
-  const addrs = node.getMultiaddrs().map(a => a.toString());
+  const peerId = node.peerId.toString();
+  
+  let inviteAddrs;
+  if (announceAddrs.length > 0) {
+    inviteAddrs = announceAddrs.map(a => {
+      if (a.includes('/p2p/')) return a;
+      return `${a}/p2p/${peerId}`;
+    });
+  } else {
+    inviteAddrs = node.getMultiaddrs().map(a => a.toString());
+  }
   
   invite = {
     v: 0,
-    peer: node.peerId.toString(),
-    addrs: addrs,
+    peer: peerId,
+    addrs: inviteAddrs,
     proto: INBOX_PROTOCOL,
     code: code,
     psk: pskToHex(psk),

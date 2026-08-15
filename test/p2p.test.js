@@ -166,6 +166,69 @@ describe('P2P Node', () => {
 
     expect(getPairTopic()).toBeNull();
   });
+
+  it('uses announceAddrs in invite when provided', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      announceAddrs: ['/ip4/192.168.1.100/tcp/4001'],
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const invite = getInvite();
+    expect(invite.addrs.length).toBe(1);
+    expect(invite.addrs[0]).toContain('/ip4/192.168.1.100/tcp/4001');
+    expect(invite.addrs[0]).toContain('/p2p/');
+  });
+
+  it('appends peer ID to announceAddrs if not present', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      announceAddrs: ['/ip4/10.0.0.5/tcp/4001'],
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const invite = getInvite();
+    expect(invite.addrs[0]).toContain(`/p2p/${invite.peer}`);
+  });
+
+  it('preserves peer ID in announceAddrs if already present', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const invite = getInvite();
+    await stopP2PNode();
+    
+    await createP2PNode({
+      listenPort: 0,
+      announceAddrs: [`/ip4/10.0.0.5/tcp/4001/p2p/${invite.peer}`],
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const newInvite = getInvite();
+    const peerIdCount = (newInvite.addrs[0].match(/\/p2p\//g) || []).length;
+    expect(peerIdCount).toBe(1);
+  });
+
+  it('does not include 127.0.0.1 when announceAddrs is set', async () => {
+    const { handleInboxRequest } = await import('../src/inbox-handler.js');
+    
+    await createP2PNode({
+      listenPort: 0,
+      announceAddrs: ['/ip4/192.168.1.50/tcp/4001'],
+      onInboxRequest: handleInboxRequest,
+    });
+
+    const invite = getInvite();
+    expect(invite.addrs.some(a => a.includes('127.0.0.1'))).toBe(false);
+  });
 });
 
 describe('P2P Pubsub Rendezvous', () => {

@@ -40,7 +40,7 @@ The inbox is **not publicly exposed**. Nash (phone) connects via libp2p with one
 
 ### Listen Addresses
 
-- **HTTP** `:3000` — In-cluster health checks only (`/v0/health`)
+- **HTTP** `:3000` — Health checks (`/v0/health`) and invite fetch (`/v0/pair`)
 - **libp2p TCP** `:4001` — P2P swarm
 
 ### Invite (glass-pair/v0)
@@ -87,6 +87,15 @@ Inbox mints one invite on startup. Prints QR (raw JSON UTF-8) and short code:
 - **Expired**: `410 Gone` if past exp
 - **Already used**: `410 Gone` if pairing already complete
 - **Invalid PSK**: `401 Unauthorized`
+
+### GET /v0/pair (HTTP)
+
+Fetch the current invite JSON over HTTP (no docker logs scraping).
+
+- **Auth**: Pane token OR loopback (127.0.0.1 / ::1). Phone token → 403.
+- **200**: Returns the same `glass-pair/v0` JSON as the QR
+- **404**: No active invite (P2P disabled)
+- **410**: Invite expired or already consumed
 
 ### Protocol: `/glass/inbox/v0`
 
@@ -212,6 +221,7 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 | `GLASS_PHONE_TOKEN` | Yes | — | Bearer token for phone role |
 | `GLASS_PANE_TOKEN` | Yes | — | Bearer token for pane role |
 | `GLASS_RELAY_ADDRS` | No | — | Comma-separated relay multiaddrs |
+| `GLASS_ANNOUNCE_ADDRS` | No | — | Comma-separated multiaddrs to advertise in invite (e.g. `/ip4/192.168.1.20/tcp/4001`) |
 | `GLASS_ENABLE_P2P` | No | `true` | Set to `false` to disable libp2p |
 | `PORT` | No | `3000` | HTTP listen port |
 | `GLASS_P2P_PORT` | No | `4001` | libp2p TCP listen port |
@@ -219,23 +229,48 @@ TLS/Ingress is Jamie's responsibility — and Jamie is choosing not to have publ
 
 Invite is minted automatically on startup (8-char code + 32-byte PSK + 15-min expiry).
 
+**`GLASS_ANNOUNCE_ADDRS`**: By default, the invite `addrs` contain the container's internal IPs (127.0.0.1, Docker bridge, etc.) which are unreachable from a phone on the LAN. Set this to your host's LAN IP to make the invite dialable.
+
 ---
 
-## Running Locally
+## Running Locally (Docker)
 
 ```bash
-npm install
+docker build -t glass-inbox-local .
 
-export GLASS_PHONE_TOKEN=test-phone
-export GLASS_PANE_TOKEN=test-pane
-export GLASS_PAIR_CODE=abcd1234abcd1234
+docker run -d --name glass-inbox-local \
+  -e GLASS_PHONE_TOKEN=<phone-token> \
+  -e GLASS_PANE_TOKEN=<pane-token> \
+  -e GLASS_ANNOUNCE_ADDRS=/ip4/<LAN-IP>/tcp/4001 \
+  -p 127.0.0.1:3000:3000 \
+  -p 4001:4001 \
+  glass-inbox-local
+```
 
-npm start
+Replace `<LAN-IP>` with your host's LAN IP (e.g. `192.168.1.20`).
+
+### Pairing
+
+```bash
+# Fetch invite JSON (loopback or pane token)
+curl -s http://127.0.0.1:3000/v0/pair | jq
+
+# Or check logs for QR
+docker logs glass-inbox-local
+```
+
+Phone scans QR or enters short code → connects via `/glass/inbox/v0`.
+
+### Health Check
+
+```bash
+curl http://127.0.0.1:3000/v0/health
 ```
 
 ### Running Tests
 
 ```bash
+npm install
 npm test
 ```
 
