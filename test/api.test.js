@@ -231,13 +231,11 @@ describe('POST /v0/messages', () => {
 });
 
 describe('GET /v0/messages', () => {
-  it('allows phone token to GET (poll for ashleigh replies)', async () => {
+  it('returns 403 for phone token', async () => {
     const res = await app.request('/v0/messages', {
       headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
     });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.messages).toEqual([]);
+    expect(res.status).toBe(403);
   });
 
   it('returns empty array when no messages', async () => {
@@ -347,6 +345,138 @@ describe('GET /v0/messages', () => {
   it('rejects invalid limit', async () => {
     const res = await app.request('/v0/messages?limit=-1', {
       headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /v0/replies', () => {
+  it('returns 403 for pane token', async () => {
+    const res = await app.request('/v0/replies', {
+      headers: { Authorization: `Bearer ${PANE_TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows phone token', async () => {
+    const res = await app.request('/v0/replies', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toEqual([]);
+  });
+
+  it('returns only ashleigh messages', async () => {
+    await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PHONE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'jamie',
+        text: 'Hello Ashleigh',
+        at: '2024-01-15T10:30:00Z',
+      }),
+    });
+    await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PANE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ashleigh',
+        text: 'Hi Jamie',
+        at: '2024-01-15T10:31:00Z',
+      }),
+    });
+    await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PHONE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'jamie',
+        text: 'How are you?',
+        at: '2024-01-15T10:32:00Z',
+      }),
+    });
+
+    const res = await app.request('/v0/replies', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0].from).toBe('ashleigh');
+    expect(body.messages[0].text).toBe('Hi Jamie');
+  });
+
+  it('supports after parameter (exclusive on at)', async () => {
+    await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PANE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ashleigh',
+        text: 'First reply',
+        at: '2024-01-15T10:30:00Z',
+      }),
+    });
+    await app.request('/v0/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PANE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ashleigh',
+        text: 'Second reply',
+        at: '2024-01-15T10:31:00Z',
+      }),
+    });
+
+    const res = await app.request('/v0/replies?after=2024-01-15T10:30:00Z', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0].text).toBe('Second reply');
+  });
+
+  it('supports limit parameter', async () => {
+    for (let i = 0; i < 5; i++) {
+      await app.request('/v0/messages', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${PANE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'ashleigh',
+          text: `Reply ${i}`,
+          at: `2024-01-15T10:3${i}:00Z`,
+        }),
+      });
+    }
+
+    const res = await app.request('/v0/replies?limit=2', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toHaveLength(2);
+  });
+
+  it('rejects invalid limit', async () => {
+    const res = await app.request('/v0/replies?limit=-1', {
+      headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
     });
     expect(res.status).toBe(400);
   });

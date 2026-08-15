@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
-import { createMessage, listMessages } from './db.js';
-import { authMiddleware, canPost, canGet } from './auth.js';
+import { createMessage, listMessages, listReplies } from './db.js';
+import { authMiddleware, canPost, canGetMessages, canGetReplies } from './auth.js';
 
 const VALID_SENDERS = ['jamie', 'ashleigh'];
 
@@ -73,7 +73,7 @@ export function createApp() {
   api.get('/messages', (c) => {
     const role = c.get('role');
     
-    if (!canGet(role)) {
+    if (!canGetMessages(role)) {
       return c.json({ error: 'Forbidden: cannot list messages' }, 403);
     }
     
@@ -89,6 +89,28 @@ export function createApp() {
     }
     
     const messages = listMessages({ after, limit });
+    return c.json({ messages });
+  });
+  
+  api.get('/replies', (c) => {
+    const role = c.get('role');
+    
+    if (!canGetReplies(role)) {
+      return c.json({ error: 'Forbidden: cannot list replies' }, 403);
+    }
+    
+    const after = c.req.query('after');
+    const limitParam = c.req.query('limit');
+    let limit = 50;
+    
+    if (limitParam) {
+      limit = parseInt(limitParam, 10);
+      if (isNaN(limit) || limit < 1) {
+        return c.json({ error: "'limit' must be a positive integer" }, 400);
+      }
+    }
+    
+    const messages = listReplies({ after, limit });
     return c.json({ messages });
   });
   

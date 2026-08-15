@@ -80,10 +80,10 @@ Validation:
 
 #### `GET /v0/messages`
 
-List messages in chronological order. **Requires authentication.**
+List all messages (full transcript) in chronological order. **Pane token only.**
 
 Query parameters:
-- `after` (optional): Return messages after this ISO-8601 timestamp
+- `after` (optional): Return messages after this ISO-8601 timestamp (exclusive)
 - `limit` (optional): Maximum messages to return (default 100, max 1000)
 
 Response `200 OK`:
@@ -101,6 +101,29 @@ Response `200 OK`:
 }
 ```
 
+#### `GET /v0/replies`
+
+List Ashleigh's replies only (for phone polling). **Phone token only.**
+
+Query parameters:
+- `after` (optional): Return replies after this ISO-8601 timestamp (exclusive)
+- `limit` (optional): Maximum replies to return (default 50, max 1000)
+
+Response `200 OK`:
+
+```json
+{
+  "messages": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "from": "ashleigh",
+      "text": "Hi Jamie",
+      "at": "2024-01-15T10:31:00Z"
+    }
+  ]
+}
+```
+
 ### Authentication
 
 All endpoints except `/v0/health` require a Bearer token in the `Authorization` header:
@@ -113,12 +136,12 @@ Two tokens are configured via environment variables:
 
 | Environment Variable | Role | Permissions |
 |---------------------|------|-------------|
-| `GLASS_PHONE_TOKEN` | phone | POST as `jamie` only; GET messages (poll for ashleigh replies) |
-| `GLASS_PANE_TOKEN` | pane | POST as `ashleigh` only; GET messages |
+| `GLASS_PHONE_TOKEN` | phone | POST as `jamie` only; GET `/v0/replies` (poll for ashleigh replies) |
+| `GLASS_PANE_TOKEN` | pane | POST as `ashleigh` only; GET `/v0/messages` (full transcript) |
 
 Responses:
 - `401 Unauthorized`: Missing or invalid token
-- `403 Forbidden`: Token valid but wrong `from` value for POST
+- `403 Forbidden`: Token valid but wrong endpoint or `from` value
 
 Both tokens must be set and non-empty at process start.
 

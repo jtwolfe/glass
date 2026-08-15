@@ -60,6 +60,25 @@ export function listMessages({ after, limit = 100 }) {
   return getDb().prepare(query).all(...params);
 }
 
+export function listReplies({ after, limit = 50 }) {
+  let query = "SELECT id, sender as \"from\", text, at FROM messages WHERE sender = 'ashleigh'";
+  const params = [];
+  
+  if (after) {
+    query += ' AND at > ?';
+    params.push(after);
+  }
+  
+  query += ' ORDER BY at ASC, id ASC';
+  
+  if (limit) {
+    query += ' LIMIT ?';
+    params.push(Math.min(limit, 1000));
+  }
+  
+  return getDb().prepare(query).all(...params);
+}
+
 export function closeDb() {
   if (db) {
     db.close();

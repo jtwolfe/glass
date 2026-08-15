@@ -57,6 +57,10 @@ export function canPost(role, from) {
   return false;
 }
 
-export function canGet(role) {
-  return role === 'phone' || role === 'pane';
+export function canGetMessages(role) {
+  return role === 'pane';
+}
+
+export function canGetReplies(role) {
+  return role === 'phone';
 }
