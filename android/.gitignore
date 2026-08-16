@@ -1,0 +1,30 @@
+# Local SDK + inbox secrets (never commit)
+local.properties
+
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android Studio / IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Secrets / keystores
+*.jks
+*.keystore
+secrets/
+*.pem
+*.key
+google-services.json
+
+# Wrapper jar is generated locally (Android Studio or `gradle wrapper`)
+gradle/wrapper/gradle-wrapper.jar

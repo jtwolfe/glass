@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "glass.fullname" . }}-ntfy
+  labels:
+    {{- include "glass.ntfy.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "glass.ntfy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "glass.ntfy.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ntfy
+          image: "{{ .Values.ntfy.image.repository }}:{{ .Values.ntfy.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - serve
+          env:
+            - name: NTFY_BEHIND_PROXY
+              value: "true"
+            - name: NTFY_AUTH_DEFAULT_ACCESS
+              value: "write-only"
+            - name: NTFY_ENABLE_LOGIN
+              value: "false"
+            - name: NTFY_ENABLE_SIGNUP
+              value: "false"
+            - name: NTFY_WEB_ROOT
+              value: "disable"
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.ntfy.resources | nindent 12 }}
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/ntfy
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: {{ include "glass.fullname" . }}-ntfy-cache
