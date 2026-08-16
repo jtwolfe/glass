@@ -1,5 +1,6 @@
 package com.jtwolfe.glass.rtc
 
+import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,15 +45,17 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class WssSessionClient(
     private val onDisconnected: (() -> Unit)? = null,
+    private val onConnected: (() -> Unit)? = null,
     private val onMessage: ((String) -> Unit)? = null,
 ) : Closeable {
 
     companion object {
+        private const val TAG = "WssSessionClient"
         private const val WSS_URL = "wss://glass.enphi.net/session"
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val REQUEST_TIMEOUT_MS = 30_000L
         private const val RECONNECT_BASE_DELAY_MS = 2_000L
-        private const val MAX_RECONNECT_ATTEMPTS = 5
+        private const val MAX_RECONNECT_ATTEMPTS = 10
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -90,21 +93,31 @@ class WssSessionClient(
      */
     suspend fun connect(phonePeer: String, pub: String? = null): WssConnectResult = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (_isConnected) return@withContext WssConnectResult.AlreadyConnected
-            if (closed.get()) return@withContext WssConnectResult.Error("Client closed")
+            if (_isConnected) {
+                Log.d(TAG, "connect: already connected")
+                return@withContext WssConnectResult.AlreadyConnected
+            }
+            if (closed.get()) {
+                Log.d(TAG, "connect: client closed")
+                return@withContext WssConnectResult.Error("Client closed")
+            }
 
             this@WssSessionClient.phonePeer = phonePeer
             this@WssSessionClient.pub = pub
             helloSent.set(false)
+
+            Log.d(TAG, "connect: attempting WSS connection to $WSS_URL")
 
             try {
                 withTimeout(CONNECT_TIMEOUT_MS) {
                     connectInternal()
                 }
             } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.w(TAG, "connect: timeout after ${CONNECT_TIMEOUT_MS}ms")
                 closeSocketOnly()
                 WssConnectResult.Timeout
             } catch (e: Exception) {
+                Log.w(TAG, "connect: exception ${e.javaClass.simpleName}: ${e.message}")
                 closeSocketOnly()
                 WssConnectResult.Error(e.message ?: "Connection failed")
             }
@@ -113,6 +126,7 @@ class WssSessionClient(
 
     private suspend fun connectInternal(): WssConnectResult {
         val deferred = CompletableDeferred<Boolean>()
+        val errorRef = AtomicReference<String?>(null)
         connectDeferred.set(deferred)
 
         val request = Request.Builder()
@@ -121,10 +135,12 @@ class WssSessionClient(
 
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(TAG, "onOpen: WSS connected, code=${response.code}")
                 webSocketRef.set(webSocket)
                 sendHello(webSocket)
                 _isConnected = true
                 connectDeferred.get()?.complete(true)
+                onConnected?.invoke()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -132,14 +148,20 @@ class WssSessionClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "onClosing: code=$code reason=$reason")
                 webSocket.close(1000, null)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "onClosed: code=$code reason=$reason")
                 handleDisconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val code = response?.code ?: -1
+                val msg = "${t.javaClass.simpleName}: ${t.message} (HTTP $code)"
+                Log.w(TAG, "onFailure: $msg")
+                errorRef.set(msg)
                 val deferred = connectDeferred.getAndSet(null)
                 if (deferred != null && !deferred.isCompleted) {
                     deferred.complete(false)
@@ -154,9 +176,12 @@ class WssSessionClient(
         connectDeferred.set(null)
 
         return if (success) {
+            Log.d(TAG, "connectInternal: success")
             WssConnectResult.Success
         } else {
-            WssConnectResult.Error("WebSocket connection failed")
+            val error = errorRef.get() ?: "WebSocket connection failed"
+            Log.w(TAG, "connectInternal: failed - $error")
+            WssConnectResult.Error(error)
         }
     }
 
@@ -169,7 +194,9 @@ class WssSessionClient(
             put("peer", peer)
             pub?.let { put("pub", it) }
         }
-        webSocket.send(hello.toString())
+        val helloStr = hello.toString()
+        Log.d(TAG, "sendHello: sending hello frame")
+        webSocket.send(helloStr)
     }
 
     private fun handleMessage(text: String) {
@@ -191,6 +218,7 @@ class WssSessionClient(
         pendingResponses.clear()
 
         if (wasConnected && !closed.get()) {
+            Log.d(TAG, "handleDisconnect: was connected, invoking onDisconnected")
             onDisconnected?.invoke()
         }
     }

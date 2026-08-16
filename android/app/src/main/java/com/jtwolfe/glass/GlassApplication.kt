@@ -1,6 +1,7 @@
 package com.jtwolfe.glass
 
 import android.app.Application
+import android.util.Log
 import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.p2p.InboxStreamClient
@@ -14,8 +15,13 @@ import com.jtwolfe.glass.settings.AgentSettings
 import com.jtwolfe.glass.settings.VoiceSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicBoolean
 
 class GlassApplication : Application() {
+    companion object {
+        private const val TAG = "GlassApplication"
+    }
+
     lateinit var inboxSettings: InboxSettings
         private set
 
@@ -46,8 +52,15 @@ class GlassApplication : Application() {
     private val _connectionState = MutableStateFlow(ConnectionState.UNPAIRED)
     val connectionState = _connectionState.asStateFlow()
 
+    /** Single-flight guard: true if a reconnect attempt is in progress */
+    val reconnectInFlight = AtomicBoolean(false)
+
+    /** Single-flight guard: true if WebRTC handshake is in progress */
+    val webRtcHandshakeInFlight = AtomicBoolean(false)
+
     var onWebRtcDisconnected: (() -> Unit)? = null
     var onWssDisconnected: (() -> Unit)? = null
+    var onWssConnected: (() -> Unit)? = null
     var onReconnectNeeded: ((pendingText: String?) -> Unit)? = null
 
     fun createWebRtcConnectionForFirstPair(invite: PairingInvite): WebRtcPeerConnection? {
@@ -56,13 +69,16 @@ class GlassApplication : Application() {
         val code = invite.code
 
         webRtcConnection?.close()
+        webRtcHandshakeInFlight.set(true)
 
         val signaling = NtfySignaling.fromInvite(peer, pub, code)
         val connection = WebRtcPeerConnection(this, signaling) {
-            _connectionState.value = if (pairingStore.isPaired) {
-                ConnectionState.OFFLINE_PAIRED
-            } else {
-                ConnectionState.UNPAIRED
+            Log.d(TAG, "WebRTC first-pair disconnected")
+            webRtcHandshakeInFlight.set(false)
+            // Don't immediately flip state - let reconnect logic handle it
+            // Only update if no reconnect is in flight and WSS is not connected
+            if (!reconnectInFlight.get()) {
+                updateConnectionState()
             }
             onWebRtcDisconnected?.invoke()
         }
@@ -71,22 +87,35 @@ class GlassApplication : Application() {
     }
 
     fun createWebRtcConnectionForReconnect(): WebRtcPeerConnection? {
+        // Single-flight guard: don't create new PC if handshake is in flight
+        if (webRtcHandshakeInFlight.get()) {
+            Log.d(TAG, "createWebRtcConnectionForReconnect: handshake in flight, skipping")
+            return null
+        }
+
         val stableTopic = pairingStore.stableTopic ?: return null
 
         webRtcConnection?.close()
+        webRtcHandshakeInFlight.set(true)
 
         val signaling = NtfySignaling.fromStableTopic(stableTopic)
         val connection = WebRtcPeerConnection(this, signaling) {
-            _connectionState.value = if (pairingStore.isPaired) {
-                if (wssClient?.isConnected == true) ConnectionState.CONNECTED
-                else ConnectionState.OFFLINE_PAIRED
-            } else {
-                ConnectionState.UNPAIRED
+            Log.d(TAG, "WebRTC reconnect disconnected")
+            webRtcHandshakeInFlight.set(false)
+            // Don't immediately flip state - let reconnect logic handle it
+            // Only update if no reconnect is in flight and WSS is not connected
+            if (!reconnectInFlight.get()) {
+                updateConnectionState()
             }
             onWebRtcDisconnected?.invoke()
         }
         webRtcConnection = connection
         return connection
+    }
+
+    /** Clear handshake flag when connection attempt completes (success or fail) */
+    fun clearWebRtcHandshakeFlag() {
+        webRtcHandshakeInFlight.set(false)
     }
 
     /**
@@ -98,17 +127,26 @@ class GlassApplication : Application() {
 
         val client = WssSessionClient(
             onDisconnected = {
-                _connectionState.value = if (pairingStore.isPaired) {
-                    if (webRtcConnection?.isConnected == true) ConnectionState.CONNECTED
-                    else ConnectionState.OFFLINE_PAIRED
-                } else {
-                    ConnectionState.UNPAIRED
+                Log.d(TAG, "WSS disconnected")
+                // Don't immediately flip state - let reconnect logic handle it
+                if (!reconnectInFlight.get()) {
+                    updateConnectionState()
                 }
                 onWssDisconnected?.invoke()
+            },
+            onConnected = {
+                Log.d(TAG, "WSS connected")
+                updateConnectionState()
+                onWssConnected?.invoke()
             },
         )
         wssClient = client
         return client
+    }
+
+    /** Get or create WSS client (don't close existing) */
+    fun getOrCreateWssClient(): WssSessionClient {
+        return wssClient ?: createWssClient()
     }
 
     fun setConnectionState(state: ConnectionState) {

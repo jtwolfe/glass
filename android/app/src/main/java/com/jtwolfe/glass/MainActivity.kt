@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -60,9 +61,14 @@ import java.time.Instant
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val ASSIST_TIMEOUT_MS = 10_000L
+    }
+
     private val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(application) { pendingText ->
-            lifecycleScope.launch { attemptReconnect(pendingText) }
+            lifecycleScope.launch { unifiedReconnect(pendingText) }
         }
     }
 
@@ -86,6 +92,9 @@ class MainActivity : ComponentActivity() {
     private val xaiOAuth = XaiOAuth()
     private var pendingDeviceCode: DeviceCodeResponse? = null
     private var lanDiscovery: LanDiscovery? = null
+
+    /** Job for the unified reconnect loop */
+    private var reconnectJob: Job? = null
 
     private val roleRequest = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -158,17 +167,28 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // On WebRTC disconnect: trigger unified reconnect (WSS first, then WebRTC)
+        // Single-flight: only start if not already reconnecting
         app.onWebRtcDisconnected = {
+            Log.d(TAG, "onWebRtcDisconnected callback")
             lifecycleScope.launch {
-                attemptReconnect(null)
+                unifiedReconnect(null)
             }
         }
 
+        // On WSS disconnect: trigger unified reconnect
         app.onWssDisconnected = {
+            Log.d(TAG, "onWssDisconnected callback")
             lifecycleScope.launch {
-                chatViewModel.onWssDisconnected()
-                attemptWssReconnect()
+                unifiedReconnect(null)
             }
+        }
+
+        // On WSS connect: update state and fetch agents
+        app.onWssConnected = {
+            Log.d(TAG, "onWssConnected callback")
+            chatViewModel.onWssConnected()
+            fetchAgents()
         }
 
         lifecycleScope.launch {
@@ -192,95 +212,11 @@ class MainActivity : ComponentActivity() {
         }
 
         // Auto-reconnect on startup if already paired
-        // Try WSS first (preferred), then WebRTC as fallback
         if (app.pairingStore.isPaired) {
             lifecycleScope.launch {
-                attemptWssConnect()
-                attemptReconnect(null)
+                unifiedReconnect(null)
             }
         }
-    }
-
-    /**
-     * Attempt to connect WSS session.
-     * WSS is preferred when available; WebRTC DC is WiFi/fallback.
-     * WSS connect failure is NOT unpair — fall back to WebRTC.
-     */
-    private suspend fun attemptWssConnect(): Boolean {
-        val app = application as GlassApplication
-
-        if (!app.pairingStore.isPaired) {
-            return false
-        }
-
-        val phonePeer = app.pairingStore.phonePeer
-        val invite = app.pairingStore.currentInvite
-        val pub = invite?.pub
-
-        val wss = app.createWssClient()
-        val result = withContext(Dispatchers.IO) {
-            wss.connect(phonePeer, pub)
-        }
-
-        return when (result) {
-            is WssConnectResult.Success, is WssConnectResult.AlreadyConnected -> {
-                app.updateConnectionState()
-                chatViewModel.onWssConnected()
-                fetchAgents()
-                true
-            }
-            else -> {
-                app.updateConnectionState()
-                false
-            }
-        }
-    }
-
-    /**
-     * Attempt to reconnect WSS after disconnect.
-     * Only reconnects if still paired.
-     */
-    private suspend fun attemptWssReconnect() {
-        val app = application as GlassApplication
-
-        if (!app.pairingStore.isPaired) {
-            return
-        }
-
-        val phonePeer = app.pairingStore.phonePeer
-        val invite = app.pairingStore.currentInvite
-        val pub = invite?.pub
-
-        var attempts = 0
-        val maxAttempts = 3
-
-        while (attempts < maxAttempts) {
-            attempts++
-            delay(2000L * attempts)
-
-            if (!app.pairingStore.isPaired) {
-                break
-            }
-
-            val wss = app.wssClient ?: app.createWssClient()
-            val result = withContext(Dispatchers.IO) {
-                wss.connect(phonePeer, pub)
-            }
-
-            when (result) {
-                is WssConnectResult.Success, is WssConnectResult.AlreadyConnected -> {
-                    app.updateConnectionState()
-                    chatViewModel.onWssConnected()
-                    fetchAgents()
-                    return
-                }
-                else -> {
-                    // Continue trying
-                }
-            }
-        }
-
-        app.updateConnectionState()
     }
 
     private fun selectVoice(voiceId: String) {
@@ -301,7 +237,7 @@ class MainActivity : ComponentActivity() {
         val app = application as GlassApplication
 
         lifecycleScope.launch {
-            // Try WSS first (preferred)
+            // Try WSS first (preferred) - only if connected
             val wss = app.wssClient
             if (wss != null && wss.isConnected) {
                 val result = withContext(Dispatchers.IO) {
@@ -314,7 +250,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Fall back to WebRTC DataChannel
+            // Fall back to WebRTC DataChannel - only if connected
             val webRtc = app.webRtcConnection
             if (webRtc != null && webRtc.isConnected) {
                 val result = withContext(Dispatchers.IO) {
@@ -325,70 +261,152 @@ class MainActivity : ComponentActivity() {
                     app.agentSettings.updateAvailableAgents(agents)
                 }
             }
+            // If neither is connected, don't spam HTTP - agents will be fetched when a path connects
         }
     }
 
-    private suspend fun attemptReconnect(pendingText: String?) {
+    /**
+     * Unified reconnect: WSS first, then WebRTC as fallback.
+     *
+     * Single-flight: only one reconnect loop runs at a time.
+     * If already connected (WSS or DC), do nothing.
+     * WSS failures do not unpair. WebRTC failures do not unpair.
+     * Stay RECONNECTING while in flight (once), not Offline/Reconnecting flash.
+     */
+    private suspend fun unifiedReconnect(pendingText: String?) {
         val app = application as GlassApplication
 
+        // Not paired? Nothing to reconnect
         if (!app.pairingStore.isPaired) {
+            Log.d(TAG, "unifiedReconnect: not paired, skipping")
             app.updateConnectionState()
-            chatViewModel.onWebRtcDisconnected()
             if (pendingText != null) {
                 chatViewModel.onReconnectFailed()
             }
             return
         }
 
-        // If WSS is already connected, we're still CONNECTED even without WebRTC
-        if (app.wssClient?.isConnected == true) {
+        // Already connected? Nothing to do
+        if (app.isAnyPathConnected) {
+            Log.d(TAG, "unifiedReconnect: already connected")
             app.updateConnectionState()
             return
         }
 
+        // Single-flight guard: only one reconnect at a time
+        if (!app.reconnectInFlight.compareAndSet(false, true)) {
+            Log.d(TAG, "unifiedReconnect: already in flight, skipping")
+            return
+        }
+
+        Log.d(TAG, "unifiedReconnect: starting reconnect loop")
+
+        // Set RECONNECTING state once
         app.setConnectionState(ConnectionState.RECONNECTING)
         chatViewModel.onReconnecting()
 
-        var attempts = 0
-        val maxAttempts = 3
+        val phonePeer = app.pairingStore.phonePeer
+        val invite = app.pairingStore.currentInvite
+        val pub = invite?.pub
 
-        while (attempts < maxAttempts) {
-            attempts++
-            delay(2000L * attempts)
+        try {
+            // Phase 1: Try WSS with backoff (preferred path)
+            var wssAttempts = 0
+            val maxWssAttempts = 5
+            while (wssAttempts < maxWssAttempts && app.pairingStore.isPaired) {
+                wssAttempts++
+                val backoffMs = 2000L * wssAttempts.coerceAtMost(4)
 
-            if (!app.pairingStore.isPaired) {
-                break
-            }
+                Log.d(TAG, "unifiedReconnect: WSS attempt $wssAttempts (backoff ${backoffMs}ms)")
 
-            // Check if WSS reconnected while we were waiting
-            if (app.wssClient?.isConnected == true) {
-                app.updateConnectionState()
-                return
-            }
+                val wss = app.getOrCreateWssClient()
+                val result = withContext(Dispatchers.IO) {
+                    wss.connect(phonePeer, pub)
+                }
 
-            val webRtc = app.createWebRtcConnectionForReconnect() ?: break
+                when (result) {
+                    is WssConnectResult.Success, is WssConnectResult.AlreadyConnected -> {
+                        Log.d(TAG, "unifiedReconnect: WSS connected")
+                        app.updateConnectionState()
+                        chatViewModel.onWssConnected()
+                        fetchAgents()
+                        return
+                    }
+                    else -> {
+                        Log.d(TAG, "unifiedReconnect: WSS attempt $wssAttempts failed: $result")
+                    }
+                }
 
-            val result = withContext(Dispatchers.IO) {
-                webRtc.connect()
-            }
-
-            when (result) {
-                is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
-                    app.setConnectionState(ConnectionState.CONNECTED)
-                    chatViewModel.onWebRtcConnected()
-                    fetchAgents()
+                // Check if we got connected via another path while waiting
+                if (app.isAnyPathConnected) {
+                    Log.d(TAG, "unifiedReconnect: connected via other path during WSS retry")
+                    app.updateConnectionState()
                     return
                 }
-                else -> {
-                    app.closeWebRtcConnection()
+
+                delay(backoffMs)
+            }
+
+            // Phase 2: Try WebRTC as fallback (only if WSS is not up)
+            // Skip if WSS connected during WSS retry
+            if (!app.isAnyPathConnected && app.pairingStore.isPaired) {
+                Log.d(TAG, "unifiedReconnect: falling back to WebRTC")
+
+                var webRtcAttempts = 0
+                val maxWebRtcAttempts = 3
+                while (webRtcAttempts < maxWebRtcAttempts && app.pairingStore.isPaired) {
+                    webRtcAttempts++
+                    val backoffMs = 2000L * webRtcAttempts
+
+                    // Check if WSS connected while we were waiting
+                    if (app.wssClient?.isConnected == true) {
+                        Log.d(TAG, "unifiedReconnect: WSS connected during WebRTC retry")
+                        app.updateConnectionState()
+                        return
+                    }
+
+                    Log.d(TAG, "unifiedReconnect: WebRTC attempt $webRtcAttempts")
+
+                    val webRtc = app.createWebRtcConnectionForReconnect()
+                    if (webRtc == null) {
+                        // Handshake already in flight, wait and retry
+                        Log.d(TAG, "unifiedReconnect: WebRTC handshake in flight, waiting")
+                        delay(backoffMs)
+                        continue
+                    }
+
+                    val result = withContext(Dispatchers.IO) {
+                        webRtc.connect()
+                    }
+                    app.clearWebRtcHandshakeFlag()
+
+                    when (result) {
+                        is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
+                            Log.d(TAG, "unifiedReconnect: WebRTC connected")
+                            app.updateConnectionState()
+                            chatViewModel.onWebRtcConnected()
+                            fetchAgents()
+                            return
+                        }
+                        else -> {
+                            Log.d(TAG, "unifiedReconnect: WebRTC attempt $webRtcAttempts failed: $result")
+                            // Don't close - let the PC live for potential late answer
+                        }
+                    }
+
+                    delay(backoffMs)
                 }
             }
-        }
 
-        app.updateConnectionState()
-        chatViewModel.onWebRtcDisconnected()
-        if (pendingText != null) {
-            chatViewModel.onReconnectFailed()
+            // All attempts failed
+            Log.d(TAG, "unifiedReconnect: all attempts failed")
+            app.updateConnectionState()
+            if (pendingText != null) {
+                chatViewModel.onReconnectFailed()
+            }
+        } finally {
+            app.reconnectInFlight.set(false)
+            Log.d(TAG, "unifiedReconnect: done")
         }
     }
 
@@ -547,6 +565,8 @@ class MainActivity : ComponentActivity() {
 
                 when (connectResult) {
                     is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
+                        app.clearWebRtcHandshakeFlag()
+
                         // Send hello to establish stable topic for reconnects
                         val phonePeer = app.pairingStore.phonePeer
                         val pluginPeer = invite.peer
@@ -559,12 +579,26 @@ class MainActivity : ComponentActivity() {
 
                         app.setConnectionState(ConnectionState.CONNECTED)
                         chatViewModel.onWebRtcConnected()
+                        fetchAgents()
 
                         // Also try to connect WSS (preferred path when available)
                         // WSS connect failure is not an error - WebRTC is working
-                        attemptWssConnect()
+                        // Run in background - don't block pairing completion
+                        lifecycleScope.launch {
+                            val pub = invite.pub
+                            val wss = app.getOrCreateWssClient()
+                            val result = withContext(Dispatchers.IO) {
+                                wss.connect(phonePeer, pub)
+                            }
+                            if (result is WssConnectResult.Success) {
+                                Log.d(TAG, "savePairing: WSS also connected")
+                                app.updateConnectionState()
+                                chatViewModel.onWssConnected()
+                            } else {
+                                Log.d(TAG, "savePairing: WSS connect failed (OK, WebRTC is working): $result")
+                            }
+                        }
 
-                        fetchAgents()
                         Toast.makeText(
                             this@MainActivity,
                             "Paired",
@@ -572,6 +606,7 @@ class MainActivity : ComponentActivity() {
                         ).show()
                     }
                     is ConnectResult.Timeout -> {
+                        app.clearWebRtcHandshakeFlag()
                         app.closeWebRtcConnection()
                         app.updateConnectionState()
                         Toast.makeText(
@@ -581,6 +616,7 @@ class MainActivity : ComponentActivity() {
                         ).show()
                     }
                     is ConnectResult.Error -> {
+                        app.clearWebRtcHandshakeFlag()
                         app.closeWebRtcConnection()
                         app.updateConnectionState()
                         Toast.makeText(
@@ -751,6 +787,15 @@ class MainActivity : ComponentActivity() {
             pendingAutoListen = false
             startListening()
         }
+
+        // On app resume while paired: check connection and reconnect if needed
+        val app = application as GlassApplication
+        if (app.pairingStore.isPaired && !app.isAnyPathConnected) {
+            Log.d(TAG, "onResume: paired but not connected, triggering reconnect")
+            lifecycleScope.launch {
+                unifiedReconnect(null)
+            }
+        }
     }
 
     override fun onPause() {
@@ -907,10 +952,6 @@ class MainActivity : ComponentActivity() {
         } else {
             speechHelper?.stopListening()
         }
-    }
-
-    companion object {
-        private const val ASSIST_TIMEOUT_MS = 10_000L
     }
 
     private fun refreshAssistantRole() {
