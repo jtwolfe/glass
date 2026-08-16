@@ -369,6 +369,35 @@ class WebRtcPeerConnection(
     }
 
     /**
+     * Send hello message after first DataChannel open.
+     * This establishes the stable topic for reconnects.
+     *
+     * @param phonePeer The phone's 52-char base32 peer ID
+     * @return true if hello was sent successfully
+     */
+    suspend fun sendHello(phonePeer: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (!_isConnected) {
+                return@withContext false
+            }
+
+            try {
+                val dc = dataChannel ?: return@withContext false
+
+                val request = JSONObject()
+                    .put("op", "hello")
+                    .put("peer", phonePeer)
+
+                val data = request.toString().toByteArray(Charsets.UTF_8)
+                val buffer = DataChannel.Buffer(ByteBuffer.wrap(data), false)
+                dc.send(buffer)
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    /**
      * Request available agents from the plugin via DataChannel.
      *
      * @return AgentsResult with list of agents or error

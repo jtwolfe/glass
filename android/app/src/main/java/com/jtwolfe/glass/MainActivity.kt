@@ -181,6 +181,13 @@ class MainActivity : ComponentActivity() {
                 availableAgents = agents
             }
         }
+
+        // Auto-reconnect on startup if already paired
+        if (app.pairingStore.isPaired) {
+            lifecycleScope.launch {
+                attemptReconnect(null)
+            }
+        }
     }
 
     private fun selectVoice(voiceId: String) {
@@ -214,10 +221,9 @@ class MainActivity : ComponentActivity() {
 
     private suspend fun attemptReconnect(pendingText: String?) {
         val app = application as GlassApplication
-        val invite = app.pairingStore.currentInvite
 
-        if (invite == null || !invite.isV1 || invite.isExpired) {
-            app.updateConnectionStateFromInvite()
+        if (!app.pairingStore.isPaired) {
+            app.updateConnectionState()
             chatViewModel.onWebRtcDisconnected()
             if (pendingText != null) {
                 chatViewModel.onReconnectFailed()
@@ -235,12 +241,11 @@ class MainActivity : ComponentActivity() {
             attempts++
             delay(2000L * attempts)
 
-            val currentInvite = app.pairingStore.currentInvite
-            if (currentInvite == null || currentInvite.isExpired) {
+            if (!app.pairingStore.isPaired) {
                 break
             }
 
-            val webRtc = app.createWebRtcConnection(currentInvite) ?: break
+            val webRtc = app.createWebRtcConnectionForReconnect() ?: break
 
             val result = withContext(Dispatchers.IO) {
                 webRtc.connect()
@@ -259,7 +264,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        app.updateConnectionStateFromInvite()
+        app.updateConnectionState()
         chatViewModel.onWebRtcDisconnected()
         if (pendingText != null) {
             chatViewModel.onReconnectFailed()
@@ -391,21 +396,21 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val app = application as GlassApplication
 
-            // Save the invite
-            app.pairingStore.save(invite)
+            // Save the invite (first-pair only)
+            app.pairingStore.saveInvite(invite)
             pairing = invite
 
             if (invite.isV1) {
                 // v1: Use ntfy.sh for WebRTC signaling (not LAN discovery)
-                // Topic = SHA-256("glass-pair/v1\n" + peer + "\n" + pub + "\n" + code)
+                // First-pair topic = SHA-256("glass-pair/v1\n" + peer + "\n" + pub + "\n" + code)
                 // Chat NEVER goes to ntfy - only WebRTC offer/answer/ICE
                 Toast.makeText(
                     this@MainActivity,
-                    "Connecting via ntfy signaling...",
+                    "Connecting...",
                     Toast.LENGTH_SHORT,
                 ).show()
 
-                val webRtc = app.createWebRtcConnection(invite)
+                val webRtc = app.createWebRtcConnectionForFirstPair(invite)
                 if (webRtc == null) {
                     Toast.makeText(
                         this@MainActivity,
@@ -420,24 +425,29 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (connectResult) {
-                    is ConnectResult.Success -> {
+                    is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
+                        // Send hello to establish stable topic for reconnects
+                        val phonePeer = app.pairingStore.phonePeer
+                        val pluginPeer = invite.peer
+                        val helloSent = withContext(Dispatchers.IO) {
+                            webRtc.sendHello(phonePeer)
+                        }
+                        if (helloSent) {
+                            app.pairingStore.markPaired(pluginPeer)
+                        }
+
                         app.setConnectionState(ConnectionState.CONNECTED)
                         chatViewModel.onWebRtcConnected()
                         fetchAgents()
                         Toast.makeText(
                             this@MainActivity,
-                            "Connected",
+                            "Paired",
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                    is ConnectResult.AlreadyConnected -> {
-                        app.setConnectionState(ConnectionState.CONNECTED)
-                        chatViewModel.onWebRtcConnected()
-                        fetchAgents()
-                    }
                     is ConnectResult.Timeout -> {
                         app.closeWebRtcConnection()
-                        app.updateConnectionStateFromInvite()
+                        app.updateConnectionState()
                         Toast.makeText(
                             this@MainActivity,
                             "Connection timed out — tap to retry",
@@ -446,7 +456,7 @@ class MainActivity : ComponentActivity() {
                     }
                     is ConnectResult.Error -> {
                         app.closeWebRtcConnection()
-                        app.updateConnectionStateFromInvite()
+                        app.updateConnectionState()
                         Toast.makeText(
                             this@MainActivity,
                             "Connection failed: ${connectResult.message}",

@@ -44,17 +44,34 @@ class GlassApplication : Application() {
     var onWebRtcDisconnected: (() -> Unit)? = null
     var onReconnectNeeded: ((pendingText: String?) -> Unit)? = null
 
-    fun createWebRtcConnection(invite: PairingInvite): WebRtcPeerConnection? {
+    fun createWebRtcConnectionForFirstPair(invite: PairingInvite): WebRtcPeerConnection? {
         val peer = invite.peer
         val pub = invite.pub ?: return null
         val code = invite.code
 
         webRtcConnection?.close()
 
-        val signaling = NtfySignaling(peer, pub, code)
+        val signaling = NtfySignaling.fromInvite(peer, pub, code)
         val connection = WebRtcPeerConnection(this, signaling) {
-            val hasValidInvite = pairingStore.currentInvite?.isValid == true
-            _connectionState.value = if (hasValidInvite) {
+            _connectionState.value = if (pairingStore.isPaired) {
+                ConnectionState.OFFLINE_PAIRED
+            } else {
+                ConnectionState.UNPAIRED
+            }
+            onWebRtcDisconnected?.invoke()
+        }
+        webRtcConnection = connection
+        return connection
+    }
+
+    fun createWebRtcConnectionForReconnect(): WebRtcPeerConnection? {
+        val stableTopic = pairingStore.stableTopic ?: return null
+
+        webRtcConnection?.close()
+
+        val signaling = NtfySignaling.fromStableTopic(stableTopic)
+        val connection = WebRtcPeerConnection(this, signaling) {
+            _connectionState.value = if (pairingStore.isPaired) {
                 ConnectionState.OFFLINE_PAIRED
             } else {
                 ConnectionState.UNPAIRED
@@ -69,12 +86,11 @@ class GlassApplication : Application() {
         _connectionState.value = state
     }
 
-    fun updateConnectionStateFromInvite() {
-        val invite = pairingStore.currentInvite
+    fun updateConnectionState() {
         val dcOpen = webRtcConnection?.isConnected == true
         _connectionState.value = when {
             dcOpen -> ConnectionState.CONNECTED
-            invite?.isValid == true -> ConnectionState.OFFLINE_PAIRED
+            pairingStore.isPaired -> ConnectionState.OFFLINE_PAIRED
             else -> ConnectionState.UNPAIRED
         }
     }
@@ -82,7 +98,7 @@ class GlassApplication : Application() {
     fun closeWebRtcConnection() {
         webRtcConnection?.close()
         webRtcConnection = null
-        updateConnectionStateFromInvite()
+        updateConnectionState()
     }
 
     override fun onCreate() {
@@ -92,7 +108,7 @@ class GlassApplication : Application() {
         pairingStore = PairingStore(this)
         voiceSettings = VoiceSettings(this)
         agentSettings = AgentSettings(this)
-        updateConnectionStateFromInvite()
+        updateConnectionState()
     }
 
     override fun onTerminate() {
