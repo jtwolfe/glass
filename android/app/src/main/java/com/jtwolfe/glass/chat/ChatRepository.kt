@@ -15,6 +15,9 @@ import com.jtwolfe.glass.pairing.SendResult
 import com.jtwolfe.glass.rtc.DataChannelRepliesResult
 import com.jtwolfe.glass.rtc.DataChannelSendResult
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.rtc.WssRepliesResult
+import com.jtwolfe.glass.rtc.WssSendResult
+import com.jtwolfe.glass.rtc.WssSessionClient
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -27,6 +30,7 @@ class ChatRepository(
     private val streamClient: InboxStreamClient? = null,
     private val pluginClient: PluginClient? = null,
     private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
+    private val wssClientProvider: (() -> WssSessionClient?)? = null,
 ) {
     private val messagesKey = stringPreferencesKey("messages_json")
 
@@ -40,6 +44,25 @@ class ChatRepository(
     }
 
     suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> {
+        // v1 WSS: Prefer WebSocket session when connected
+        val wss = wssClientProvider?.invoke()
+        if (wss != null && wss.isConnected) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = wss.replies(after = after, limit = 50, token = token)
+            if (result is WssRepliesResult.Success) {
+                return result.messages
+                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
+                    .map { msg ->
+                        V0Message(
+                            id = msg.id.takeIf { it.isNotBlank() },
+                            from = msg.from,
+                            text = msg.text,
+                            at = msg.at,
+                        )
+                    }
+            }
+        }
+
         // v1 WebRTC: Use DataChannel when connected (chat never goes to ntfy)
         val webRtc = webRtcConnectionProvider?.invoke()
         if (webRtc != null && webRtc.isConnected) {
@@ -96,6 +119,27 @@ class ChatRepository(
     }
 
     suspend fun sendRemote(config: InboxConfig, message: V0Message, agentId: String? = null): V0Message {
+        // v1 WSS: Prefer WebSocket session when connected
+        val wss = wssClientProvider?.invoke()
+        if (wss != null && wss.isConnected) {
+            val token = config.token.takeIf { it.isNotBlank() }
+            val result = wss.send(
+                from = "jamie",
+                text = message.text,
+                at = message.at,
+                agentId = agentId,
+                token = token,
+            )
+            if (result is WssSendResult.Success) {
+                return V0Message(
+                    id = result.id.takeIf { it.isNotBlank() },
+                    from = result.from,
+                    text = result.text,
+                    at = result.at,
+                )
+            }
+        }
+
         // v1 WebRTC: Use DataChannel when connected (from=jamie only, chat never goes to ntfy)
         val webRtc = webRtcConnectionProvider?.invoke()
         if (webRtc != null && webRtc.isConnected) {

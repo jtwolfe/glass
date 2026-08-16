@@ -180,6 +180,22 @@ class ChatViewModel(
     }
 
     fun onWebRtcConnected() {
+        onAnyPathConnected()
+    }
+
+    fun onWebRtcDisconnected() {
+        onAnyPathDisconnected()
+    }
+
+    fun onWssConnected() {
+        onAnyPathConnected()
+    }
+
+    fun onWssDisconnected() {
+        onAnyPathDisconnected()
+    }
+
+    private fun onAnyPathConnected() {
         val config = _state.value.inbox
         _state.update { ui ->
             ui.copy(
@@ -201,7 +217,7 @@ class ChatViewModel(
         }
     }
 
-    fun onWebRtcDisconnected() {
+    private fun onAnyPathDisconnected() {
         val config = _state.value.inbox
         _state.update { ui ->
             ui.copy(status = connectionState.displayText)
@@ -443,6 +459,7 @@ class ChatViewModel(
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     val app = application as GlassApplication
                     val webRtcProvider: () -> WebRtcPeerConnection? = { app.webRtcConnection }
+                    val wssClientProvider: () -> com.jtwolfe.glass.rtc.WssSessionClient? = { app.wssClient }
                     val connectionStateProvider: () -> ConnectionState = { app.connectionState.value }
                     return ChatViewModel(
                         application = app,
@@ -452,6 +469,7 @@ class ChatViewModel(
                             streamClient = app.inboxStreamClient,
                             pluginClient = app.pluginClient,
                             webRtcConnectionProvider = webRtcProvider,
+                            wssClientProvider = wssClientProvider,
                         ),
                         xaiAuthStore = app.xaiAuthStore,
                         voiceSettings = app.voiceSettings,

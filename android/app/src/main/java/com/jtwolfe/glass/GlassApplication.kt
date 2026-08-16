@@ -9,6 +9,7 @@ import com.jtwolfe.glass.pairing.PairingStore
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.rtc.NtfySignaling
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.rtc.WssSessionClient
 import com.jtwolfe.glass.settings.AgentSettings
 import com.jtwolfe.glass.settings.VoiceSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,10 +39,15 @@ class GlassApplication : Application() {
     var webRtcConnection: WebRtcPeerConnection? = null
         private set
 
+    @Volatile
+    var wssClient: WssSessionClient? = null
+        private set
+
     private val _connectionState = MutableStateFlow(ConnectionState.UNPAIRED)
     val connectionState = _connectionState.asStateFlow()
 
     var onWebRtcDisconnected: (() -> Unit)? = null
+    var onWssDisconnected: (() -> Unit)? = null
     var onReconnectNeeded: ((pendingText: String?) -> Unit)? = null
 
     fun createWebRtcConnectionForFirstPair(invite: PairingInvite): WebRtcPeerConnection? {
@@ -72,7 +78,8 @@ class GlassApplication : Application() {
         val signaling = NtfySignaling.fromStableTopic(stableTopic)
         val connection = WebRtcPeerConnection(this, signaling) {
             _connectionState.value = if (pairingStore.isPaired) {
-                ConnectionState.OFFLINE_PAIRED
+                if (wssClient?.isConnected == true) ConnectionState.CONNECTED
+                else ConnectionState.OFFLINE_PAIRED
             } else {
                 ConnectionState.UNPAIRED
             }
@@ -82,20 +89,67 @@ class GlassApplication : Application() {
         return connection
     }
 
+    /**
+     * Create WSS session client for the paired phone.
+     * WSS is preferred when available; WebRTC DC is WiFi/fallback.
+     */
+    fun createWssClient(): WssSessionClient {
+        wssClient?.close()
+
+        val client = WssSessionClient(
+            onDisconnected = {
+                _connectionState.value = if (pairingStore.isPaired) {
+                    if (webRtcConnection?.isConnected == true) ConnectionState.CONNECTED
+                    else ConnectionState.OFFLINE_PAIRED
+                } else {
+                    ConnectionState.UNPAIRED
+                }
+                onWssDisconnected?.invoke()
+            },
+        )
+        wssClient = client
+        return client
+    }
+
     fun setConnectionState(state: ConnectionState) {
         _connectionState.value = state
     }
 
+    /**
+     * Update connection state based on WSS OR DataChannel status.
+     * CONNECTED if WSS is open OR DataChannel is open.
+     */
     fun updateConnectionState() {
+        val wssOpen = wssClient?.isConnected == true
         val dcOpen = webRtcConnection?.isConnected == true
         _connectionState.value = when {
-            dcOpen -> ConnectionState.CONNECTED
+            wssOpen || dcOpen -> ConnectionState.CONNECTED
             pairingStore.isPaired -> ConnectionState.OFFLINE_PAIRED
             else -> ConnectionState.UNPAIRED
         }
     }
 
+    /**
+     * Check if any talk path is connected (WSS or DataChannel).
+     */
+    val isAnyPathConnected: Boolean
+        get() = wssClient?.isConnected == true || webRtcConnection?.isConnected == true
+
     fun closeWebRtcConnection() {
+        webRtcConnection?.close()
+        webRtcConnection = null
+        updateConnectionState()
+    }
+
+    fun closeWssClient() {
+        wssClient?.close()
+        wssClient = null
+        updateConnectionState()
+    }
+
+    fun closeAllConnections() {
+        wssClient?.close()
+        wssClient = null
         webRtcConnection?.close()
         webRtcConnection = null
         updateConnectionState()
@@ -115,6 +169,7 @@ class GlassApplication : Application() {
         super.onTerminate()
         inboxStreamClient.close()
         pluginClient.close()
+        wssClient?.close()
         webRtcConnection?.close()
     }
 }
