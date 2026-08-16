@@ -1,0 +1,8 @@
+# Ruff configuration for glass-peer
+
+[lint]
+# Ignore rules that are intentionally violated
+ignore = [
+    # BLE001: Blind exception catches are intentional for network resilience
+    "BLE001",
+]

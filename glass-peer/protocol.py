@@ -3,9 +3,9 @@
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class Message:
     from_: str  # "jamie" or agent name
     text: str
     at: str  # ISO-8601
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
 
 
 @dataclass
@@ -34,13 +34,13 @@ class ProtocolConfig:
     """Protocol handler configuration."""
 
     # Available agents (can be updated dynamically)
-    agents: List[Agent] = field(default_factory=list)
+    agents: list[Agent] = field(default_factory=list)
 
     # Default agent when none specified
-    default_agent_id: Optional[str] = None
+    default_agent_id: str | None = None
 
     # Callback for incoming messages
-    on_message: Optional[Callable[[Message], Awaitable[None]]] = None
+    on_message: Callable[[Message], Awaitable[None]] | None = None
 
 
 class ProtocolHandler:
@@ -57,7 +57,7 @@ class ProtocolHandler:
     def __init__(
         self,
         config: ProtocolConfig,
-        on_hello: Optional[Callable[[str], Awaitable[None]]] = None,
+        on_hello: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize protocol handler.
@@ -68,19 +68,19 @@ class ProtocolHandler:
         """
         self._config = config
         self._on_hello = on_hello
-        self._messages: List[Message] = []
-        self._phone_peer: Optional[str] = None
+        self._messages: list[Message] = []
+        self._phone_peer: str | None = None
 
     @property
-    def phone_peer(self) -> Optional[str]:
+    def phone_peer(self) -> str | None:
         """Get phone peer ID from hello message."""
         return self._phone_peer
 
-    def set_agents(self, agents: List[Agent]) -> None:
+    def set_agents(self, agents: list[Agent]) -> None:
         """Update available agents list."""
         self._config.agents = agents
 
-    async def handle_message(self, data: str) -> Optional[str]:
+    async def handle_message(self, data: str) -> str | None:
         """
         Handle incoming DataChannel message.
 
@@ -108,7 +108,7 @@ class ProtocolHandler:
         else:
             return self._error_response(f"Unknown op: {op}")
 
-    async def _handle_hello(self, msg: dict) -> Optional[str]:
+    async def _handle_hello(self, msg: dict) -> str | None:
         """Handle hello message to establish stable topic."""
         phone_peer = msg.get("peer", "")
         if not phone_peer:
@@ -221,7 +221,7 @@ class ProtocolHandler:
             "agents": agents,
         })
 
-    def add_reply(self, from_agent: str, text: str, agent_id: Optional[str] = None) -> Message:
+    def add_reply(self, from_agent: str, text: str, agent_id: str | None = None) -> Message:
         """
         Add a reply from the peer side.
 

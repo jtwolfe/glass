@@ -3,9 +3,9 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import AsyncIterator, Optional, Callable, Awaitable
 
 import aiohttp
 
@@ -49,8 +49,8 @@ class NtfySignaling:
         """
         self._ntfy_url = ntfy_url.rstrip("/")
         self._topic = topic
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._subscribe_task: Optional[asyncio.Task] = None
+        self._session: aiohttp.ClientSession | None = None
+        self._subscribe_task: asyncio.Task | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -159,7 +159,7 @@ class NtfySignaling:
                 if self._running:
                     await asyncio.sleep(5)
 
-    def _parse_message(self, line: str) -> Optional[SignalingMessage]:
+    def _parse_message(self, line: str) -> SignalingMessage | None:
         """Parse ntfy NDJSON line into signaling message."""
         try:
             obj = json.loads(line)

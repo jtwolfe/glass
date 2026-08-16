@@ -2,18 +2,18 @@
 
 import asyncio
 import logging
-from typing import Optional, Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 from aiortc import (
-    RTCPeerConnection,
-    RTCSessionDescription,
     RTCConfiguration,
     RTCIceServer,
+    RTCPeerConnection,
+    RTCSessionDescription,
 )
 from aiortc.rtcdatachannel import RTCDataChannel
 
 from ntfy_signaling import NtfySignaling, SignalingMessage, SignalingType
-from protocol import ProtocolHandler, ProtocolConfig, Agent
+from protocol import Agent, ProtocolConfig, ProtocolHandler
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ class WebRtcPeer:
         signaling: NtfySignaling,
         stun_server: str,
         protocol_config: ProtocolConfig,
-        on_hello: Optional[Callable[[str], Awaitable[None]]] = None,
-        on_disconnect: Optional[Callable[[], Awaitable[None]]] = None,
+        on_hello: Callable[[str], Awaitable[None]] | None = None,
+        on_disconnect: Callable[[], Awaitable[None]] | None = None,
     ):
         """
         Initialize WebRTC peer.
@@ -56,11 +56,11 @@ class WebRtcPeer:
         self._protocol = ProtocolHandler(protocol_config, on_hello=on_hello)
         self._on_disconnect = on_disconnect
 
-        self._pc: Optional[RTCPeerConnection] = None
-        self._channel: Optional[RTCDataChannel] = None
+        self._pc: RTCPeerConnection | None = None
+        self._channel: RTCDataChannel | None = None
         self._connected = False
         self._running = False
-        self._subscribe_task: Optional[asyncio.Task] = None
+        self._subscribe_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -68,7 +68,7 @@ class WebRtcPeer:
         return self._connected
 
     @property
-    def phone_peer(self) -> Optional[str]:
+    def phone_peer(self) -> str | None:
         """Get phone peer ID from hello message."""
         return self._protocol.phone_peer
 
@@ -173,24 +173,9 @@ class WebRtcPeer:
         # aiortc expects the full candidate line
         # The Android side sends just the candidate string
         try:
-            from aiortc import RTCIceCandidate
-
             # Parse candidate string (e.g. "candidate:... typ host ...")
             # aiortc can handle the raw SDP format
             if candidate_str.startswith("candidate:"):
-                # Add ICE candidate
-                candidate = RTCIceCandidate(
-                    component=1,
-                    foundation="",
-                    ip="",
-                    port=0,
-                    priority=0,
-                    protocol="",
-                    type="",
-                    sdpMid="0",
-                    sdpMLineIndex=0,
-                )
-                # Let aiortc parse from SDP
                 await self._pc.addIceCandidate(candidate_str)
         except Exception as e:
             logger.debug(f"ICE candidate parse error (often benign): {e}")

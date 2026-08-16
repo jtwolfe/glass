@@ -7,8 +7,8 @@ import signal
 import sys
 
 from config import Config
-from state import StateStore
 from server import GlassServer
+from state import StateStore
 
 logging.basicConfig(
     level=logging.INFO,

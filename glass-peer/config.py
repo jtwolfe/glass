@@ -49,7 +49,7 @@ class Config:
                 "GLASS_NTFY_INTERNAL_URL", "http://ntfy:80"
             ),
             ntfy_public_url=os.environ.get(
-                "GLASS_NTFY_PUBLIC_URL", "https://glass.example.com/ntfy"
+                "GLASS_NTFY_PUBLIC_URL", "https://glass.enphi.net/ntfy"
             ),
             stun_server=os.environ.get(
                 "GLASS_STUN_SERVER", "stun:stun.l.google.com:19302"

@@ -1,12 +1,10 @@
 """Persistent state for glass-peer pairing."""
 
 import json
-import os
 import threading
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from mint import Invite, compute_stable_topic
 
@@ -16,13 +14,13 @@ class PairState:
     """Persistent pairing state."""
 
     # Current invite (may be expired)
-    invite: Optional[Invite] = None
+    invite: Invite | None = None
 
     # Paired phone peer ID (52-char base32)
-    phone_peer: Optional[str] = None
+    phone_peer: str | None = None
 
     # When pairing was established
-    paired_at: Optional[str] = None
+    paired_at: str | None = None
 
     @property
     def is_paired(self) -> bool:
@@ -30,7 +28,7 @@ class PairState:
         return self.phone_peer is not None
 
     @property
-    def stable_topic(self) -> Optional[str]:
+    def stable_topic(self) -> str | None:
         """Compute stable reconnect topic if paired."""
         if not self.is_paired or not self.invite:
             return None
@@ -126,17 +124,17 @@ class StateStore:
             self._state.mark_paired(phone_peer)
             self._save()
 
-    def get_invite(self) -> Optional[Invite]:
+    def get_invite(self) -> Invite | None:
         """Get current invite."""
         with self._lock:
             return self._state.invite
 
-    def get_phone_peer(self) -> Optional[str]:
+    def get_phone_peer(self) -> str | None:
         """Get paired phone peer ID."""
         with self._lock:
             return self._state.phone_peer
 
-    def get_stable_topic(self) -> Optional[str]:
+    def get_stable_topic(self) -> str | None:
         """Get stable reconnect topic if paired."""
         with self._lock:
             return self._state.stable_topic

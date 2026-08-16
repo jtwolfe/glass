@@ -2,10 +2,8 @@
 
 import hashlib
 import secrets
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-
+from datetime import datetime, timedelta, timezone
 
 # Crockford Base32 alphabet (no I, L, O, U to avoid confusion)
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"

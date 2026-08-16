@@ -1,12 +1,13 @@
 """Tests for DataChannel protocol handler."""
 
-import pytest
 import json
-
 import sys
+
+import pytest
+
 sys.path.insert(0, '..')
 
-from protocol import ProtocolHandler, ProtocolConfig, Agent, Message
+from protocol import Agent, ProtocolConfig, ProtocolHandler
 
 
 @pytest.fixture

@@ -1,22 +1,20 @@
 """HTTP server for glass-peer with /pair, /qr, and /health endpoints."""
 
-import asyncio
 import base64
 import io
 import json
 import logging
 import secrets
-from typing import Optional
 
-from aiohttp import web
 import qrcode
 import qrcode.image.svg
+from aiohttp import web
 
 from config import Config
-from mint import mint_invite, Invite
-from state import StateStore
-from protocol import ProtocolConfig, Agent
+from mint import Invite, mint_invite
 from ntfy_signaling import NtfySignaling
+from protocol import Agent, ProtocolConfig
+from state import StateStore
 from webrtc_peer import WebRtcPeer
 
 logger = logging.getLogger(__name__)
@@ -61,8 +59,8 @@ class GlassServer:
         self._config = config
         self._state = state_store
         self._app = web.Application()
-        self._peer: Optional[WebRtcPeer] = None
-        self._current_invite: Optional[Invite] = None
+        self._peer: WebRtcPeer | None = None
+        self._current_invite: Invite | None = None
 
         # Protocol config (agents can be configured externally)
         self._protocol_config = ProtocolConfig(
