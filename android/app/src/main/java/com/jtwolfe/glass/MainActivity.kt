@@ -33,6 +33,7 @@ import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.pairing.PluginResult
 import com.jtwolfe.glass.rtc.ConnectResult
+import com.jtwolfe.glass.rtc.WebRtcConnectionListener
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
@@ -275,7 +276,26 @@ class MainActivity : ComponentActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
 
-                val webRtc = app.createWebRtcConnection(invite)
+                val connectionListener = object : WebRtcConnectionListener {
+                    override fun onConnected() {
+                        runOnUiThread {
+                            chatViewModel.onWebRtcConnected()
+                        }
+                    }
+
+                    override fun onDisconnected() {
+                        runOnUiThread {
+                            chatViewModel.onWebRtcDisconnected()
+                            Toast.makeText(
+                                this@MainActivity,
+                                "WebRTC disconnected. Re-scan QR to reconnect.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }
+
+                val webRtc = app.createWebRtcConnection(invite, connectionListener)
                 if (webRtc == null) {
                     Toast.makeText(
                         this@MainActivity,
@@ -308,6 +328,7 @@ class MainActivity : ComponentActivity() {
                     }
                     is ConnectResult.Timeout -> {
                         app.closeWebRtcConnection()
+                        chatViewModel.onWebRtcDisconnected()
                         Toast.makeText(
                             this@MainActivity,
                             "Connection timed out. Plugin may not be reachable (hard NAT).",
@@ -316,6 +337,7 @@ class MainActivity : ComponentActivity() {
                     }
                     is ConnectResult.Error -> {
                         app.closeWebRtcConnection()
+                        chatViewModel.onWebRtcDisconnected()
                         Toast.makeText(
                             this@MainActivity,
                             "Connection failed: ${connectResult.message}",

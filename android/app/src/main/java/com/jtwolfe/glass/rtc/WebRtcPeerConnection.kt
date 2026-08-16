@@ -33,6 +33,15 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Listener for WebRTC connection state changes.
+ * Used to notify the UI when the DataChannel connects or disconnects.
+ */
+interface WebRtcConnectionListener {
+    fun onConnected()
+    fun onDisconnected()
+}
+
+/**
  * WebRTC DataChannel connection for glass-pair v1.
  *
  * Signaling via ntfy.sh topic (computed from peer/pub/code).
@@ -56,6 +65,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class WebRtcPeerConnection(
     private val context: Context,
     private val signaling: NtfySignaling,
+    private val listener: WebRtcConnectionListener? = null,
 ) : Closeable {
 
     companion object {
@@ -228,7 +238,11 @@ class WebRtcPeerConnection(
                     if (!channelOpenDeferred.isCompleted) {
                         channelOpenDeferred.complete(false)
                     }
+                    val wasConnected = _isConnected
                     _isConnected = false
+                    if (wasConnected) {
+                        listener?.onDisconnected()
+                    }
                 }
                 else -> {}
             }
@@ -251,7 +265,11 @@ class WebRtcPeerConnection(
                     if (!channelOpenDeferred.isCompleted) {
                         channelOpenDeferred.complete(false)
                     }
+                    val wasConnected = _isConnected
                     _isConnected = false
+                    if (wasConnected) {
+                        listener?.onDisconnected()
+                    }
                 }
                 else -> {}
             }
@@ -270,9 +288,13 @@ class WebRtcPeerConnection(
                     }
                 }
                 DataChannel.State.CLOSED -> {
+                    val wasConnected = _isConnected
                     _isConnected = false
                     pendingResponses.forEach { it.complete("") }
                     pendingResponses.clear()
+                    if (wasConnected) {
+                        listener?.onDisconnected()
+                    }
                 }
                 else -> {}
             }

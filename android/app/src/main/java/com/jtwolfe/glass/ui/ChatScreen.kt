@@ -15,7 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
@@ -227,29 +229,14 @@ private fun Composer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(
-                onClick = { },
+            HoldToTalkButton(
+                isListening = isListening,
                 enabled = !sending,
-                modifier = Modifier.pointerInput(hasMicPermission) {
-                    detectTapGestures(
-                        onPress = {
-                            if (!hasMicPermission) {
-                                onRequestMicPermission()
-                            } else {
-                                onStartListening()
-                                tryAwaitRelease()
-                                onStopListening()
-                            }
-                        },
-                    )
-                },
-            ) {
-                Icon(
-                    Icons.Filled.Mic,
-                    contentDescription = if (isListening) "Listening..." else "Hold to talk",
-                    tint = if (isListening) MaterialTheme.colorScheme.error else Color.Unspecified,
-                )
-            }
+                hasMicPermission = hasMicPermission,
+                onRequestMicPermission = onRequestMicPermission,
+                onStartListening = onStartListening,
+                onStopListening = onStopListening,
+            )
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraftChange,
@@ -266,6 +253,58 @@ private fun Composer(
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }
         }
+    }
+}
+
+@Composable
+private fun HoldToTalkButton(
+    isListening: Boolean,
+    enabled: Boolean,
+    hasMicPermission: Boolean,
+    onRequestMicPermission: () -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
+) {
+    val backgroundColor = if (isListening) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+    val contentColor = if (isListening) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onPrimary
+    }
+
+    Box(
+        modifier = Modifier
+            .background(
+                color = if (enabled) backgroundColor else backgroundColor.copy(alpha = 0.38f),
+                shape = RoundedCornerShape(50),
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .pointerInput(hasMicPermission, enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    if (!hasMicPermission) {
+                        onRequestMicPermission()
+                    } else {
+                        onStartListening()
+                        val up = waitForUpOrCancellation()
+                        up?.consume()
+                        onStopListening()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Mic,
+            contentDescription = if (isListening) "Listening..." else "Hold to talk",
+            tint = if (enabled) contentColor else contentColor.copy(alpha = 0.38f),
+        )
     }
 }
 

@@ -8,6 +8,7 @@ import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.pairing.PairingStore
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.rtc.NtfySignaling
+import com.jtwolfe.glass.rtc.WebRtcConnectionListener
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
 
 class GlassApplication : Application() {
@@ -28,15 +29,22 @@ class GlassApplication : Application() {
     var webRtcConnection: WebRtcPeerConnection? = null
         private set
 
-    fun createWebRtcConnection(invite: PairingInvite): WebRtcPeerConnection? {
+    @Volatile
+    var webRtcConnectionListener: WebRtcConnectionListener? = null
+
+    fun createWebRtcConnection(
+        invite: PairingInvite,
+        listener: WebRtcConnectionListener? = null,
+    ): WebRtcPeerConnection? {
         val peer = invite.peer
         val pub = invite.pub ?: return null
         val code = invite.code
 
         webRtcConnection?.close()
+        webRtcConnectionListener = listener
 
         val signaling = NtfySignaling(peer, pub, code)
-        val connection = WebRtcPeerConnection(this, signaling)
+        val connection = WebRtcPeerConnection(this, signaling, listener)
         webRtcConnection = connection
         return connection
     }

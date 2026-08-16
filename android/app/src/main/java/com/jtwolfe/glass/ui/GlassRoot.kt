@@ -36,6 +36,7 @@ fun GlassRoot(
             inbox = state.inbox,
             xaiAuth = xaiAuth,
             pairing = pairing,
+            connectionStatus = state.status,
             isDefaultAssistant = isDefaultAssistant,
             xaiLoginLoading = xaiLoginLoading,
             onBack = { screen = "chat" },

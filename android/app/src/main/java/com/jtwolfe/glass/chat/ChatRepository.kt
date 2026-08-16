@@ -114,6 +114,9 @@ class ChatRepository(
                     at = result.at,
                 )
             }
+            if (result is DataChannelSendResult.Error) {
+                throw SendFailedException("WebRTC send failed: ${result.message}")
+            }
         }
 
         // v1 LAN (parked): Use PluginClient TCP socket when paired
@@ -134,6 +137,9 @@ class ChatRepository(
                     at = result.at,
                 )
             }
+            if (result is SendResult.Error) {
+                throw SendFailedException("Plugin send failed: ${result.message}")
+            }
         }
 
         // v0: Use P2P stream if connected
@@ -151,6 +157,9 @@ class ChatRepository(
                     V0Message.fromJson(json) ?: message
                 }.getOrDefault(message)
             }
+            if (response is StreamResponse.Error) {
+                throw SendFailedException("Stream send failed: ${response.message}")
+            }
         }
 
         // Fallback: HTTPS inbox only if URL is actually configured
@@ -158,8 +167,11 @@ class ChatRepository(
             return client.postMessage(config, message)
         }
 
-        return message
+        // No path available - message never left the phone
+        throw SendFailedException("No connection available. Scan QR to connect.")
     }
+
+    class SendFailedException(message: String) : Exception(message)
 
     suspend fun transcribe(config: InboxConfig, audio: ByteArray): String? =
         client.transcribe(config, audio)

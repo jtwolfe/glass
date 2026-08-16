@@ -51,6 +51,7 @@ fun SettingsScreen(
     inbox: InboxConfig,
     xaiAuth: XaiAuthBundle?,
     pairing: PairingInvite?,
+    connectionStatus: String?,
     isDefaultAssistant: Boolean,
     xaiLoginLoading: Boolean,
     onBack: () -> Unit,
@@ -113,6 +114,7 @@ fun SettingsScreen(
             // Inbox pairing section
             PairingSection(
                 pairing = pairing,
+                connectionStatus = connectionStatus,
                 onOpenPairing = onOpenPairing,
                 onClearPairing = onClearPairing,
             )
@@ -233,9 +235,12 @@ private fun XaiLoginSection(
 @Composable
 private fun PairingSection(
     pairing: PairingInvite?,
+    connectionStatus: String?,
     onOpenPairing: () -> Unit,
     onClearPairing: () -> Unit,
 ) {
+    val isConnected = connectionStatus?.contains("connected", ignoreCase = true) == true
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Plugin Pairing", style = MaterialTheme.typography.titleMedium)
 
@@ -243,51 +248,79 @@ private fun PairingSection(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    containerColor = if (isConnected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.errorContainer
+                    },
                 ),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    val statusText = if (pairing.isV1) {
-                        "v1 paired — WebRTC via ntfy signaling"
+                    val statusText = connectionStatus ?: if (pairing.isV1) {
+                        "Offline — scan QR to connect"
                     } else {
                         "v0 paired (legacy P2P stream)"
                     }
                     Text(
                         statusText,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = if (isConnected) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        },
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "Peer: ${pairing.peer.take(16)}...",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = if (isConnected) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        },
                     )
                     Text(
                         "Code: ${pairing.shortCode}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = if (isConnected) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        },
                     )
                     if (pairing.isV1) {
                         pairing.ntfyTopic?.let { topic ->
                             Text(
                                 "Topic: ${topic.take(16)}...",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = if (isConnected) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                },
                             )
                         }
                     } else if (pairing.hasCircuitRelay) {
                         Text(
                             "Circuit relay available",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = if (isConnected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            },
                         )
                     }
                 }
             }
             if (pairing.isV1) {
                 Text(
-                    "v1 uses WebRTC DataChannel via ntfy.sh signaling. Chat never goes to ntfy. Hard NAT fails closed.",
+                    if (isConnected) {
+                        "v1 uses WebRTC DataChannel via ntfy.sh signaling. Chat never goes to ntfy."
+                    } else {
+                        "Disconnected. Re-scan QR to reconnect. Hard NAT fails closed."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
@@ -295,6 +328,19 @@ private fun PairingSection(
                     "Chat uses P2P stream when connected. Falls back to HTTPS if stream drops.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+            if (!isConnected && pairing.isV1) {
+                Button(
+                    onClick = onOpenPairing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        Icons.Default.QrCodeScanner,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                    Text("Re-scan QR to Connect")
+                }
             }
             OutlinedButton(
                 onClick = onClearPairing,
