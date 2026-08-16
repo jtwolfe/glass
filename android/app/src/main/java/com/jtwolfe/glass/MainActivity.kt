@@ -542,13 +542,14 @@ class MainActivity : ComponentActivity() {
         stopReplyAudio()
         ttsHelper?.stop()
 
-        val auth = xaiAuth
-        if (auth != null && !auth.isExpired) {
+        val app = application as GlassApplication
+        val hasUsableBearer = app.xaiAuthStore.getFreshAccessToken() != null
+        if (hasUsableBearer) {
             val started = xaiRecorder?.startRecording() == true
             if (started) {
                 chatViewModel.onListeningStateChange(true, "")
             } else {
-                Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
+                speechHelper?.startListening()
             }
         } else {
             speechHelper?.startListening()
@@ -556,13 +557,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopListening() {
-        val auth = xaiAuth
-        if (auth != null && !auth.isExpired && xaiRecorder?.isActive == true) {
+        if (xaiRecorder?.isActive == true) {
             chatViewModel.onListeningStateChange(false, "")
             lifecycleScope.launch {
                 val audio = xaiRecorder?.stopRecording()
                 if (audio == null || audio.isEmpty()) {
-                    Toast.makeText(this@MainActivity, "No audio captured", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "No audio — trying mic again", Toast.LENGTH_SHORT).show()
+                    speechHelper?.startListening()
                     return@launch
                 }
 
@@ -572,14 +573,11 @@ class MainActivity : ComponentActivity() {
                 }
                 chatViewModel.onListeningStateChange(false, "")
 
-                if (transcript.isNullOrBlank()) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "xAI STT failed — check network or try again",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
+                if (!transcript.isNullOrBlank()) {
                     chatViewModel.onVoiceTranscript(transcript)
+                } else {
+                    Toast.makeText(this@MainActivity, "Falling back to device STT", Toast.LENGTH_SHORT).show()
+                    speechHelper?.startListening()
                 }
             }
         } else {
