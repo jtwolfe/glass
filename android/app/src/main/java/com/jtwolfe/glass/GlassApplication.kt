@@ -9,6 +9,10 @@ import com.jtwolfe.glass.pairing.PairingStore
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.rtc.NtfySignaling
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.settings.AgentSettings
+import com.jtwolfe.glass.settings.VoiceSettings
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class GlassApplication : Application() {
     lateinit var inboxSettings: InboxSettings
@@ -20,6 +24,12 @@ class GlassApplication : Application() {
     lateinit var pairingStore: PairingStore
         private set
 
+    lateinit var voiceSettings: VoiceSettings
+        private set
+
+    lateinit var agentSettings: AgentSettings
+        private set
+
     val inboxStreamClient: InboxStreamClient by lazy { InboxStreamClient() }
 
     val pluginClient: PluginClient by lazy { PluginClient() }
@@ -27,6 +37,11 @@ class GlassApplication : Application() {
     @Volatile
     var webRtcConnection: WebRtcPeerConnection? = null
         private set
+
+    private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
+    val connectionState = _connectionState.asStateFlow()
+
+    var onWebRtcDisconnected: (() -> Unit)? = null
 
     fun createWebRtcConnection(invite: PairingInvite): WebRtcPeerConnection? {
         val peer = invite.peer
@@ -36,14 +51,22 @@ class GlassApplication : Application() {
         webRtcConnection?.close()
 
         val signaling = NtfySignaling(peer, pub, code)
-        val connection = WebRtcPeerConnection(this, signaling)
+        val connection = WebRtcPeerConnection(this, signaling) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            onWebRtcDisconnected?.invoke()
+        }
         webRtcConnection = connection
         return connection
+    }
+
+    fun setConnectionState(state: ConnectionState) {
+        _connectionState.value = state
     }
 
     fun closeWebRtcConnection() {
         webRtcConnection?.close()
         webRtcConnection = null
+        _connectionState.value = ConnectionState.DISCONNECTED
     }
 
     override fun onCreate() {
@@ -51,6 +74,8 @@ class GlassApplication : Application() {
         inboxSettings = InboxSettings(this)
         xaiAuthStore = XaiAuthStore(this)
         pairingStore = PairingStore(this)
+        voiceSettings = VoiceSettings(this)
+        agentSettings = AgentSettings(this)
     }
 
     override fun onTerminate() {
@@ -59,4 +84,10 @@ class GlassApplication : Application() {
         pluginClient.close()
         webRtcConnection?.close()
     }
+}
+
+enum class ConnectionState {
+    DISCONNECTED,
+    RECONNECTING,
+    CONNECTED,
 }

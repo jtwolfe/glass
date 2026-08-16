@@ -1,12 +1,16 @@
 package com.jtwolfe.glass.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -18,17 +22,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -40,12 +48,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jtwolfe.glass.chat.ChatUiState
+import com.jtwolfe.glass.chat.SttError
 import com.jtwolfe.glass.inbox.V0Message
-import com.jtwolfe.glass.ui.theme.AshleighBubble
-import com.jtwolfe.glass.ui.theme.Ink
-import com.jtwolfe.glass.ui.theme.JamieBubble
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -61,9 +68,11 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onDismissError: () -> Unit,
+    onDismissSttError: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
+    onLoginClick: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
@@ -87,11 +96,21 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Ashleigh")
                         Text(
-                            text = state.status ?: "",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = state.selectedAgentName,
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        state.status?.let { status ->
+                            Text(
+                                text = status,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = when {
+                                    status.contains("Reconnecting") -> MaterialTheme.colorScheme.tertiary
+                                    status.contains("Offline") -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -112,6 +131,13 @@ fun ChatScreen(
                 .padding(padding)
                 .navigationBarsPadding(),
         ) {
+            AnimatedVisibility(visible = state.sttError != null) {
+                SttErrorBanner(
+                    error = state.sttError,
+                    onDismiss = onDismissSttError,
+                    onLoginClick = onLoginClick,
+                )
+            }
             if (!isDefaultAssistant) {
                 AssistantBanner(onRequestAssistantRole)
             }
@@ -124,7 +150,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(state.messages, key = { "${it.from}|${it.at}|${it.text}" }) { msg ->
-                    MessageBubble(msg)
+                    MessageBubble(msg, state.selectedAgentName)
                 }
             }
             Composer(
@@ -133,12 +159,60 @@ fun ChatScreen(
                 isListening = state.isListening,
                 partialTranscript = state.partialTranscript,
                 hasMicPermission = hasMicPermission,
+                agentName = state.selectedAgentName,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
                 onRequestMicPermission = onRequestMicPermission,
                 onStartListening = onStartListening,
                 onStopListening = onStopListening,
             )
+        }
+    }
+}
+
+@Composable
+private fun SttErrorBanner(
+    error: SttError?,
+    onDismiss: () -> Unit,
+    onLoginClick: () -> Unit,
+) {
+    if (error == null) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = error.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                if (error.isAuthError) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = onLoginClick,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                    ) {
+                        Text("Login with xAI →")
+                    }
+                }
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
         }
     }
 }
@@ -153,17 +227,19 @@ private fun AssistantBanner(onRequest: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "Not the default assistant yet. Long-press home needs ROLE_ASSISTANT.",
+            "Not the default assistant. Tap to enable long-press home.",
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         TextButton(onClick = onRequest) { Text("Grant") }
     }
 }
 
 @Composable
-private fun MessageBubble(message: V0Message) {
+private fun MessageBubble(message: V0Message, agentName: String) {
     val outgoing = message.isOutgoing
+    val senderName = if (outgoing) "Jamie" else agentName
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start,
@@ -172,25 +248,44 @@ private fun MessageBubble(message: V0Message) {
             modifier = Modifier
                 .widthIn(max = 320.dp)
                 .background(
-                    color = if (outgoing) JamieBubble else AshleighBubble,
+                    color = if (outgoing) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
                     shape = RoundedCornerShape(16.dp),
                 )
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = if (outgoing) Alignment.End else Alignment.Start,
         ) {
             Text(
-                text = if (outgoing) "Jamie" else "Ashleigh",
+                text = senderName,
                 style = MaterialTheme.typography.labelSmall,
-                color = if (outgoing) Color(0xFFB8D4DE) else Ink,
+                fontWeight = FontWeight.Medium,
+                color = if (outgoing) {
+                    MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = message.text,
-                color = if (outgoing) Color.White else Ink,
+                color = if (outgoing) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = formatAt(message.at),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (outgoing) Color(0xFFB8D4DE) else Ink.copy(alpha = 0.6f),
+                color = if (outgoing) {
+                    MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                },
             )
         }
     }
@@ -203,19 +298,24 @@ private fun Composer(
     isListening: Boolean,
     partialTranscript: String,
     hasMicPermission: Boolean,
+    agentName: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
         if (isListening && partialTranscript.isNotEmpty()) {
             Text(
                 text = partialTranscript,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -230,6 +330,18 @@ private fun Composer(
             Button(
                 onClick = { },
                 enabled = !sending,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isListening) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                    contentColor = if (isListening) {
+                        MaterialTheme.colorScheme.onError
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    },
+                ),
                 modifier = Modifier.pointerInput(hasMicPermission) {
                     detectTapGestures(
                         onPress = {
@@ -247,7 +359,6 @@ private fun Composer(
                 Icon(
                     Icons.Filled.Mic,
                     contentDescription = if (isListening) "Listening..." else "Hold to talk",
-                    tint = if (isListening) MaterialTheme.colorScheme.error else Color.Unspecified,
                 )
             }
             OutlinedTextField(
@@ -256,13 +367,20 @@ private fun Composer(
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        if (isListening) "Listening..." else "Message Ashleigh",
+                        if (isListening) "Listening..." else "Message $agentName",
                     )
                 },
                 maxLines = 4,
                 enabled = !sending && !isListening,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                ),
             )
-            Button(onClick = onSend, enabled = draft.isNotBlank() && !sending && !isListening) {
+            Button(
+                onClick = onSend,
+                enabled = draft.isNotBlank() && !sending && !isListening,
+            ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }
         }

@@ -95,7 +95,7 @@ class ChatRepository(
         return emptyList()
     }
 
-    suspend fun sendRemote(config: InboxConfig, message: V0Message): V0Message {
+    suspend fun sendRemote(config: InboxConfig, message: V0Message, agentId: String? = null): V0Message {
         // v1 WebRTC: Use DataChannel when connected (from=jamie only, chat never goes to ntfy)
         val webRtc = webRtcConnectionProvider?.invoke()
         if (webRtc != null && webRtc.isConnected) {
@@ -104,6 +104,7 @@ class ChatRepository(
                 from = "jamie",
                 text = message.text,
                 at = message.at,
+                agentId = agentId,
                 token = token,
             )
             if (result is DataChannelSendResult.Success) {

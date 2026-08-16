@@ -1,6 +1,7 @@
 package com.jtwolfe.glass.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -9,6 +10,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.chat.ChatViewModel
 import com.jtwolfe.glass.pairing.PairingInvite
+import com.jtwolfe.glass.settings.Agent
+import kotlinx.coroutines.flow.Flow
 
 @Composable
 fun GlassRoot(
@@ -18,6 +21,8 @@ fun GlassRoot(
     isDefaultAssistant: Boolean,
     hasMicPermission: Boolean,
     xaiLoginLoading: Boolean,
+    selectedVoiceId: String,
+    availableAgents: List<Agent>,
     onRequestAssistantRole: () -> Unit,
     onOpenAssistantSettings: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -27,6 +32,8 @@ fun GlassRoot(
     onXaiLogout: () -> Unit,
     onSavePairing: (PairingInvite) -> Unit,
     onClearPairing: () -> Unit,
+    onVoiceSelected: (String) -> Unit,
+    onAgentSelected: (Agent) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf("chat") }
@@ -38,6 +45,9 @@ fun GlassRoot(
             pairing = pairing,
             isDefaultAssistant = isDefaultAssistant,
             xaiLoginLoading = xaiLoginLoading,
+            selectedVoiceId = selectedVoiceId,
+            availableAgents = availableAgents,
+            selectedAgentId = state.selectedAgentId,
             onBack = { screen = "chat" },
             onSaveInbox = viewModel::saveInbox,
             onRequestAssistantRole = onRequestAssistantRole,
@@ -46,6 +56,8 @@ fun GlassRoot(
             onXaiLogout = onXaiLogout,
             onOpenPairing = { screen = "pairing" },
             onClearPairing = onClearPairing,
+            onVoiceSelected = onVoiceSelected,
+            onAgentSelected = onAgentSelected,
         )
         "pairing" -> PairingScreen(
             onBack = { screen = "settings" },
@@ -53,7 +65,7 @@ fun GlassRoot(
                 onSavePairing(invite)
                 screen = "settings"
             },
-            relayConfigured = false, // TODO: Add relay settings
+            relayConfigured = false,
         )
         else -> ChatScreen(
             state = state,
@@ -64,9 +76,14 @@ fun GlassRoot(
             onOpenSettings = { screen = "settings" },
             onRequestAssistantRole = onRequestAssistantRole,
             onDismissError = viewModel::dismissError,
+            onDismissSttError = viewModel::dismissSttError,
             onRequestMicPermission = onRequestMicPermission,
             onStartListening = onStartListening,
             onStopListening = onStopListening,
+            onLoginClick = {
+                screen = "settings"
+                onXaiLogin()
+            },
         )
     }
 }

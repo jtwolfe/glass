@@ -13,6 +13,8 @@ import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.settings.AgentSettings
+import com.jtwolfe.glass.settings.VoiceSettings
 import com.jtwolfe.glass.voice.SttResult
 import com.jtwolfe.glass.voice.TtsResult
 import com.jtwolfe.glass.voice.XaiVoiceClient
@@ -23,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -36,13 +39,22 @@ data class ChatUiState(
     val sending: Boolean = false,
     val status: String? = null,
     val error: String? = null,
+    val sttError: SttError? = null,
     val isListening: Boolean = false,
     val partialTranscript: String = "",
+    val selectedAgentName: String = "Ashleigh",
+    val selectedAgentId: String = "28b14c15-d85a-4fdf-9d64-770a4d0d4084",
+)
+
+data class SttError(
+    val message: String,
+    val isAuthError: Boolean = false,
+    val httpCode: Int = 0,
 )
 
 sealed class TranscribeResult {
     data class Success(val text: String) : TranscribeResult()
-    data class Error(val message: String) : TranscribeResult()
+    data class Error(val message: String, val httpCode: Int = 0, val isAuthError: Boolean = false) : TranscribeResult()
     data object NotLoggedIn : TranscribeResult()
 }
 
@@ -51,6 +63,8 @@ class ChatViewModel(
     private val settings: InboxSettings,
     private val repository: ChatRepository,
     private val xaiAuthStore: XaiAuthStore,
+    private val voiceSettings: VoiceSettings,
+    private val agentSettings: AgentSettings,
     private val pluginClient: PluginClient? = null,
     private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
     private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
@@ -83,15 +97,28 @@ class ChatViewModel(
             lastSpokenAt = local
                 .filter { it.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) }
                 .maxOfOrNull { it.at } ?: EPOCH
+        }
+
+        viewModelScope.launch {
+            agentSettings.loadCachedAgents()
+            agentSettings.selectedAgent.collect { agent ->
+                _state.update { it.copy(
+                    selectedAgentName = agent.name,
+                    selectedAgentId = agent.id,
+                ) }
+            }
+        }
+
+        viewModelScope.launch {
             settings.config.collect { config ->
                 _state.update { ui ->
                     ui.copy(
                         inbox = config,
                         status = when {
-                            isWebRtcConnected -> "Plugin connected (WebRTC DataChannel)"
-                            isPluginConnected -> "Plugin connected (v1 TCP)"
-                            config.isHttpConfigured -> "Inbox HTTP (${config.source})"
-                            else -> "Local-only — scan QR to connect via ntfy"
+                            isWebRtcConnected -> "Connected"
+                            isPluginConnected -> "Connected (TCP)"
+                            config.isHttpConfigured -> "HTTP (${config.source})"
+                            else -> "Offline — scan QR to connect"
                         },
                     )
                 }
@@ -163,13 +190,19 @@ class ChatViewModel(
         _state.update { ui ->
             ui.copy(
                 status = when {
-                    isPluginConnected -> "Plugin connected (v1 TCP)"
-                    config.isHttpConfigured -> "Inbox HTTP (${config.source})"
-                    else -> "Local-only — scan QR to connect via ntfy"
+                    isPluginConnected -> "Connected (TCP)"
+                    config.isHttpConfigured -> "HTTP (${config.source})"
+                    else -> "Offline — scan QR to connect"
                 },
             )
         }
         restartPolling(config)
+    }
+
+    fun onReconnecting() {
+        _state.update { ui ->
+            ui.copy(status = "Reconnecting...")
+        }
     }
 
     fun refresh() {
@@ -183,19 +216,21 @@ class ChatViewModel(
         val text = _state.value.draft.trim()
         if (text.isEmpty() || _state.value.sending) return
         val outgoing = V0Message.outgoing(text)
+        val agentId = _state.value.selectedAgentId
         viewModelScope.launch {
             _state.update {
                 it.copy(
                     draft = "",
                     sending = true,
                     error = null,
+                    sttError = null,
                     messages = it.messages + outgoing,
                 )
             }
             persistLocal()
             val config = _state.value.inbox
             if (canSendRemote) {
-                runCatching { repository.sendRemote(config, outgoing) }
+                runCatching { repository.sendRemote(config, outgoing, agentId) }
                     .onFailure { err ->
                         _state.update {
                             it.copy(error = err.message ?: "Send failed — kept locally")
@@ -245,12 +280,21 @@ class ChatViewModel(
             is TokenResult.Valid -> tokenResult.accessToken
             else -> return null
         }
+        val voiceId = voiceSettings.voiceId.first()
         return withContext(Dispatchers.IO) {
-            when (val result = xaiVoiceClient.synthesize(bearer, text)) {
+            when (val result = xaiVoiceClient.synthesize(bearer, text, voiceId)) {
                 is TtsResult.Success -> result.audio
                 is TtsResult.Error -> null
             }
         }
+    }
+
+    fun setSttError(error: SttError?) {
+        _state.update { it.copy(sttError = error) }
+    }
+
+    fun dismissSttError() {
+        _state.update { it.copy(sttError = null) }
     }
 
     /**
@@ -287,7 +331,11 @@ class ChatViewModel(
 
         return when (sttResult) {
             is SttResult.Success -> TranscribeResult.Success(sttResult.text)
-            is SttResult.Error -> TranscribeResult.Error(sttResult.displayMessage)
+            is SttResult.Error -> TranscribeResult.Error(
+                message = sttResult.displayMessage,
+                httpCode = sttResult.httpCode,
+                isAuthError = sttResult.httpCode in 401..403,
+            )
         }
     }
 
@@ -361,6 +409,8 @@ class ChatViewModel(
                             webRtcConnectionProvider = webRtcProvider,
                         ),
                         xaiAuthStore = app.xaiAuthStore,
+                        voiceSettings = app.voiceSettings,
+                        agentSettings = app.agentSettings,
                         pluginClient = app.pluginClient,
                         webRtcConnectionProvider = webRtcProvider,
                     ) as T

@@ -232,7 +232,7 @@ class XaiOAuth(
         const val DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code"
         const val TOKEN_URL = "https://auth.x.ai/oauth2/token"
         const val CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
-        const val SCOPE = "openid profile email offline_access grok-cli:access api:access"
+        const val SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
         const val DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
     }
 }

@@ -47,8 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 5. When DataChannel opens, ntfy is done
  *
  * DataChannel protocol (UTF-8 JSON lines, same as PluginClient):
- *   {"v":1,"op":"send","from":"jamie","text":"…","at":"<ISO>"}
+ *   {"v":1,"op":"send","from":"jamie","text":"…","at":"<ISO>","agentId":"<uuid>"}
  *   {"v":1,"op":"replies","after":"<ISO>","limit":50}
+ *   {"v":1,"op":"agents"}
  *   Optional: "authorization":"Bearer <token>"
  *
  * Never from=ashleigh on send. Chat NEVER goes to ntfy.
@@ -56,6 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class WebRtcPeerConnection(
     private val context: Context,
     private val signaling: NtfySignaling,
+    private val onDisconnected: (() -> Unit)? = null,
 ) : Closeable {
 
     companion object {
@@ -228,7 +230,11 @@ class WebRtcPeerConnection(
                     if (!channelOpenDeferred.isCompleted) {
                         channelOpenDeferred.complete(false)
                     }
+                    val wasConnected = _isConnected
                     _isConnected = false
+                    if (wasConnected) {
+                        onDisconnected?.invoke()
+                    }
                 }
                 else -> {}
             }
@@ -251,7 +257,11 @@ class WebRtcPeerConnection(
                     if (!channelOpenDeferred.isCompleted) {
                         channelOpenDeferred.complete(false)
                     }
+                    val wasConnected = _isConnected
                     _isConnected = false
+                    if (wasConnected) {
+                        onDisconnected?.invoke()
+                    }
                 }
                 else -> {}
             }
@@ -294,6 +304,7 @@ class WebRtcPeerConnection(
      * @param from Sender name (always "jamie")
      * @param text Message text
      * @param at ISO-8601 timestamp
+     * @param agentId Agent UUID to send to
      * @param token Optional bearer token for authorization
      * @return SendResult with success/error status and echoed message
      */
@@ -301,6 +312,7 @@ class WebRtcPeerConnection(
         from: String,
         text: String,
         at: String,
+        agentId: String? = null,
         token: String? = null,
     ): DataChannelSendResult = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -310,7 +322,7 @@ class WebRtcPeerConnection(
 
             try {
                 withTimeout(REQUEST_TIMEOUT_MS) {
-                    sendInternal(from, text, at, token)
+                    sendInternal(from, text, at, agentId, token)
                 }
             } catch (_: TimeoutCancellationException) {
                 DataChannelSendResult.Error("Request timeout")
@@ -320,7 +332,7 @@ class WebRtcPeerConnection(
         }
     }
 
-    private suspend fun sendInternal(from: String, text: String, at: String, token: String?): DataChannelSendResult {
+    private suspend fun sendInternal(from: String, text: String, at: String, agentId: String?, token: String?): DataChannelSendResult {
         val dc = dataChannel ?: return DataChannelSendResult.NotConnected
 
         val request = JSONObject()
@@ -329,6 +341,10 @@ class WebRtcPeerConnection(
             .put("from", from)
             .put("text", text)
             .put("at", at)
+
+        if (!agentId.isNullOrBlank()) {
+            request.put("agentId", agentId)
+        }
 
         if (!token.isNullOrBlank()) {
             request.put("authorization", "Bearer $token")
@@ -350,6 +366,82 @@ class WebRtcPeerConnection(
         }
 
         return parseSendResponse(response)
+    }
+
+    /**
+     * Request available agents from the plugin via DataChannel.
+     *
+     * @return AgentsResult with list of agents or error
+     */
+    suspend fun agents(): DataChannelAgentsResult = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (!_isConnected) {
+                return@withContext DataChannelAgentsResult.NotConnected
+            }
+
+            try {
+                withTimeout(REQUEST_TIMEOUT_MS) {
+                    agentsInternal()
+                }
+            } catch (_: TimeoutCancellationException) {
+                DataChannelAgentsResult.Error("Request timeout")
+            } catch (e: Exception) {
+                DataChannelAgentsResult.Error(e.message ?: "Agents fetch failed")
+            }
+        }
+    }
+
+    private suspend fun agentsInternal(): DataChannelAgentsResult {
+        val dc = dataChannel ?: return DataChannelAgentsResult.NotConnected
+
+        val request = JSONObject()
+            .put("v", 1)
+            .put("op", "agents")
+
+        val responseDeferred = CompletableDeferred<String>()
+        pendingResponses.add(responseDeferred)
+
+        val data = request.toString().toByteArray(Charsets.UTF_8)
+        val buffer = DataChannel.Buffer(ByteBuffer.wrap(data), false)
+        if (!dc.send(buffer)) {
+            pendingResponses.remove(responseDeferred)
+            return DataChannelAgentsResult.Error("Failed to send")
+        }
+
+        val response = responseDeferred.await()
+        if (response.isBlank()) {
+            return DataChannelAgentsResult.Error("Connection closed")
+        }
+
+        return parseAgentsResponse(response)
+    }
+
+    private fun parseAgentsResponse(line: String): DataChannelAgentsResult {
+        return try {
+            val json = JSONObject(line)
+            val v = json.optInt("v", -1)
+            val ok = json.optBoolean("ok", false)
+
+            if (v == 1 && ok) {
+                val agentsArray = json.optJSONArray("agents") ?: JSONArray()
+                val agents = mutableListOf<DataChannelAgent>()
+                for (i in 0 until agentsArray.length()) {
+                    val agent = agentsArray.optJSONObject(i) ?: continue
+                    agents.add(
+                        DataChannelAgent(
+                            id = agent.optString("id", ""),
+                            name = agent.optString("name", ""),
+                        )
+                    )
+                }
+                DataChannelAgentsResult.Success(agents)
+            } else {
+                val error = json.optString("error", "").ifBlank { null }
+                DataChannelAgentsResult.Error(error ?: "Agents request rejected")
+            }
+        } catch (_: Exception) {
+            DataChannelAgentsResult.Error("Invalid response")
+        }
     }
 
     private fun parseSendResponse(line: String): DataChannelSendResult {
@@ -531,6 +623,17 @@ data class DataChannelMessage(
     val from: String,
     val text: String,
     val at: String,
+)
+
+sealed class DataChannelAgentsResult {
+    data class Success(val agents: List<DataChannelAgent>) : DataChannelAgentsResult()
+    data object NotConnected : DataChannelAgentsResult()
+    data class Error(val message: String) : DataChannelAgentsResult()
+}
+
+data class DataChannelAgent(
+    val id: String,
+    val name: String,
 )
 
 private class SimpleSdpObserver : SdpObserver {

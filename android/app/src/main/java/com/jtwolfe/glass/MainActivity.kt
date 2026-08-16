@@ -26,6 +26,7 @@ import com.jtwolfe.glass.auth.DeviceCodeResponse
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
+import com.jtwolfe.glass.chat.SttError
 import com.jtwolfe.glass.chat.TranscribeResult
 import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.DiscoveryState
@@ -33,6 +34,10 @@ import com.jtwolfe.glass.pairing.LanDiscovery
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.pairing.PluginResult
 import com.jtwolfe.glass.rtc.ConnectResult
+import com.jtwolfe.glass.rtc.DataChannelAgentsResult
+import com.jtwolfe.glass.settings.Agent
+import com.jtwolfe.glass.settings.AgentSettings
+import com.jtwolfe.glass.settings.VoiceSettings
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
@@ -41,6 +46,7 @@ import com.jtwolfe.glass.voice.TtsHelper
 import com.jtwolfe.glass.voice.XaiAudioRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
@@ -58,6 +64,8 @@ class MainActivity : ComponentActivity() {
     private var xaiAuth by mutableStateOf<XaiAuthBundle?>(null)
     private var pairing by mutableStateOf<PairingInvite?>(null)
     private var xaiLoginLoading by mutableStateOf(false)
+    private var selectedVoiceId by mutableStateOf(VoiceSettings.DEFAULT_VOICE)
+    private var availableAgents by mutableStateOf(listOf(AgentSettings.DEFAULT_AGENT))
 
     private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
@@ -103,6 +111,8 @@ class MainActivity : ComponentActivity() {
                     isDefaultAssistant = isAssistant,
                     hasMicPermission = hasMicPermission,
                     xaiLoginLoading = xaiLoginLoading,
+                    selectedVoiceId = selectedVoiceId,
+                    availableAgents = availableAgents,
                     onRequestAssistantRole = ::requestAssistantRole,
                     onOpenAssistantSettings = ::openAssistantSettingsFallback,
                     onRequestMicPermission = ::requestMicPermission,
@@ -112,6 +122,8 @@ class MainActivity : ComponentActivity() {
                     onXaiLogout = ::xaiLogout,
                     onSavePairing = ::savePairing,
                     onClearPairing = ::clearPairing,
+                    onVoiceSelected = ::selectVoice,
+                    onAgentSelected = ::selectAgent,
                 )
             }
         }
@@ -134,6 +146,100 @@ class MainActivity : ComponentActivity() {
                 pairing = invite
             }
         }
+
+        app.onWebRtcDisconnected = {
+            lifecycleScope.launch {
+                attemptReconnect()
+            }
+        }
+
+        lifecycleScope.launch {
+            app.voiceSettings.voiceId.collect { voiceId ->
+                selectedVoiceId = voiceId
+            }
+        }
+
+        lifecycleScope.launch {
+            app.agentSettings.loadCachedAgents()
+            app.agentSettings.availableAgents.collect { agents ->
+                availableAgents = agents
+            }
+        }
+    }
+
+    private fun selectVoice(voiceId: String) {
+        val app = application as GlassApplication
+        lifecycleScope.launch {
+            app.voiceSettings.setVoiceId(voiceId)
+        }
+    }
+
+    private fun selectAgent(agent: Agent) {
+        val app = application as GlassApplication
+        lifecycleScope.launch {
+            app.agentSettings.setSelectedAgent(agent)
+        }
+    }
+
+    private fun fetchAgents() {
+        val app = application as GlassApplication
+        val webRtc = app.webRtcConnection ?: return
+
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                webRtc.agents()
+            }
+            if (result is DataChannelAgentsResult.Success) {
+                val agents = result.agents.map { Agent(it.id, it.name) }
+                app.agentSettings.updateAvailableAgents(agents)
+            }
+        }
+    }
+
+    private suspend fun attemptReconnect() {
+        val app = application as GlassApplication
+        val invite = app.pairingStore.currentInvite
+
+        if (invite == null || !invite.isV1 || invite.isExpired) {
+            chatViewModel.onWebRtcDisconnected()
+            return
+        }
+
+        app.setConnectionState(ConnectionState.RECONNECTING)
+        chatViewModel.onReconnecting()
+
+        var attempts = 0
+        val maxAttempts = 3
+
+        while (attempts < maxAttempts) {
+            attempts++
+            delay(2000L * attempts)
+
+            val currentInvite = app.pairingStore.currentInvite
+            if (currentInvite == null || currentInvite.isExpired) {
+                break
+            }
+
+            val webRtc = app.createWebRtcConnection(currentInvite) ?: break
+
+            val result = withContext(Dispatchers.IO) {
+                webRtc.connect()
+            }
+
+            when (result) {
+                is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
+                    app.setConnectionState(ConnectionState.CONNECTED)
+                    chatViewModel.onWebRtcConnected()
+                    return
+                }
+                else -> {
+                    app.closeWebRtcConnection()
+                }
+            }
+        }
+
+        app.setConnectionState(ConnectionState.DISCONNECTED)
+        chatViewModel.onWebRtcDisconnected()
     }
 
     private fun startXaiLogin() {
@@ -291,20 +397,19 @@ class MainActivity : ComponentActivity() {
 
                 when (connectResult) {
                     is ConnectResult.Success -> {
+                        app.setConnectionState(ConnectionState.CONNECTED)
                         chatViewModel.onWebRtcConnected()
+                        fetchAgents()
                         Toast.makeText(
                             this@MainActivity,
-                            "Connected via WebRTC DataChannel",
+                            "Connected",
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
                     is ConnectResult.AlreadyConnected -> {
+                        app.setConnectionState(ConnectionState.CONNECTED)
                         chatViewModel.onWebRtcConnected()
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Already connected",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        fetchAgents()
                     }
                     is ConnectResult.Timeout -> {
                         app.closeWebRtcConnection()
@@ -562,7 +667,7 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val audio = xaiRecorder?.stopRecording()
                 if (audio == null || audio.isEmpty()) {
-                    Toast.makeText(this@MainActivity, "No audio captured", Toast.LENGTH_SHORT).show()
+                    chatViewModel.setSttError(SttError("No audio captured"))
                     return@launch
                 }
 
@@ -574,13 +679,21 @@ class MainActivity : ComponentActivity() {
 
                 when (result) {
                     is TranscribeResult.Success -> {
+                        chatViewModel.dismissSttError()
                         chatViewModel.onVoiceTranscript(result.text)
                     }
                     is TranscribeResult.Error -> {
-                        Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
+                        chatViewModel.setSttError(SttError(
+                            message = result.message,
+                            isAuthError = result.isAuthError,
+                            httpCode = result.httpCode,
+                        ))
                     }
                     is TranscribeResult.NotLoggedIn -> {
-                        Toast.makeText(this@MainActivity, "Not logged in — use Settings to login", Toast.LENGTH_LONG).show()
+                        chatViewModel.setSttError(SttError(
+                            message = "Not logged in — tap to login with xAI",
+                            isAuthError = true,
+                        ))
                     }
                 }
             }
