@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="com.jtwolfe.glass.assist.GlassRecognitionService"
+    android:sessionService="com.jtwolfe.glass.assist.GlassVoiceInteractionSessionService"
+    android:settingsActivity="com.jtwolfe.glass.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />

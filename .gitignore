@@ -1,0 +1,54 @@
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# Glass-peer data
+glass-peer/data/
+/data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yaml
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+kubeconfig
+
+# Test outputs
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Local secrets (never commit)
+secrets/
+*.pem
+*.key

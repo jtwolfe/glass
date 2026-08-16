@@ -1,0 +1,75 @@
+# Glass Helm chart default values
+#
+# Configure these for your deployment.
+# Create a values-override.yaml with your settings.
+
+# Global settings
+global:
+  # Image pull policy (set to Never for local images)
+  imagePullPolicy: IfNotPresent
+
+# ntfy signaling server
+ntfy:
+  image:
+    repository: binwiederhier/ntfy
+    tag: v2.11.0
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  # Cache volume size
+  cacheSize: 1Gi
+
+# glass-peer WebRTC server
+peer:
+  image:
+    repository: glass-peer
+    tag: latest
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  # Data volume size
+  dataSize: 1Gi
+  # Invite TTL in seconds
+  inviteTtl: 300
+  # STUN server
+  stunServer: "stun:stun.l.google.com:19302"
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+    # For nginx ingress with /ntfy path stripping:
+    # nginx.ingress.kubernetes.io/rewrite-target: /$2
+  # Public hostname
+  host: glass.example.com
+  # TLS configuration
+  tls:
+    enabled: true
+    secretName: glass-tls
+  # Path prefix for ntfy (set to /ntfy for path-based routing)
+  ntfyPathPrefix: /ntfy
+
+# Secret configuration (must be created separately)
+# Create secret with:
+#   kubectl create secret generic glass-auth \
+#     --from-literal=pair-username=admin \
+#     --from-literal=pair-password=<strong-random-password>
+auth:
+  existingSecret: glass-auth
+  usernameKey: pair-username
+  passwordKey: pair-password
+
+# Service configuration
+service:
+  type: ClusterIP
+  peerPort: 8080
+  ntfyPort: 80

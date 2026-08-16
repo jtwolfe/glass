@@ -1,0 +1,13 @@
+apiVersion: v2
+name: glass
+description: Glass peer-to-phone WebRTC chat with ntfy signaling
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - glass
+  - webrtc
+  - ntfy
+  - signaling
+maintainers:
+  - name: glass-team

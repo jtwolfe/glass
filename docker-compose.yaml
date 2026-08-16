@@ -1,0 +1,78 @@
+# Glass stack: ntfy signaling + glass-peer WebRTC
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env with your values
+#   docker compose up -d
+#
+# The phone connects to ${PUBLIC_NTFY_URL} for signaling.
+# The peer connects to ntfy internally at http://ntfy:80.
+#
+# To pair:
+#   curl -u "${GLASS_PAIR_USERNAME}:${GLASS_PAIR_PASSWORD}" \
+#        http://localhost:8080/pair
+#
+# To get QR:
+#   curl -u "${GLASS_PAIR_USERNAME}:${GLASS_PAIR_PASSWORD}" \
+#        http://localhost:8080/qr -o qr.svg
+
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    container_name: glass-ntfy
+    restart: unless-stopped
+    command: serve
+    environment:
+      # ntfy does not support BASE_URL with path prefix
+      # Reverse proxy must strip /ntfy before forwarding
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_AUTH_DEFAULT_ACCESS=write-only
+      - NTFY_ENABLE_LOGIN=false
+      - NTFY_ENABLE_SIGNUP=false
+      - NTFY_WEB_ROOT=disable
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    # Only expose internally for compose networking
+    # External access goes through reverse proxy
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  glass-peer:
+    build:
+      context: ./glass-peer
+      dockerfile: Dockerfile
+    image: glass-peer:latest
+    container_name: glass-peer
+    restart: unless-stopped
+    depends_on:
+      ntfy:
+        condition: service_healthy
+    environment:
+      # Pair endpoint auth (required)
+      - GLASS_PAIR_USERNAME=${GLASS_PAIR_USERNAME:?Set GLASS_PAIR_USERNAME}
+      - GLASS_PAIR_PASSWORD=${GLASS_PAIR_PASSWORD:?Set GLASS_PAIR_PASSWORD}
+      # ntfy URLs
+      - GLASS_NTFY_INTERNAL_URL=http://ntfy:80
+      - GLASS_NTFY_PUBLIC_URL=${PUBLIC_NTFY_URL:-https://glass.example.com/ntfy}
+      # WebRTC
+      - GLASS_STUN_SERVER=${GLASS_STUN_SERVER:-stun:stun.l.google.com:19302}
+      # Invite TTL
+      - GLASS_INVITE_TTL=${GLASS_INVITE_TTL:-300}
+    volumes:
+      - glass-data:/data
+    ports:
+      - "${GLASS_PEER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ntfy-cache:
+  glass-data:
