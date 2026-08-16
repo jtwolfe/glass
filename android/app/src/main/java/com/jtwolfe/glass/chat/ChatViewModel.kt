@@ -84,6 +84,10 @@ class ChatViewModel(
     private var afterCursor: String = EPOCH
     private var lastSpokenAt: String = EPOCH
 
+    /** True after local messages + cursor are loaded. No TTS from history until this is true. */
+    @Volatile
+    private var localLoadComplete = false
+
     private var pendingSendText: String? = null
 
     private val connectionState: ConnectionState
@@ -112,12 +116,27 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch {
+            // Load persisted cursor FIRST (before messages, to ensure TTS doesn't fire on history)
+            val persistedCursor = repository.loadLastSpokenAt()
+            if (persistedCursor != null && persistedCursor > lastSpokenAt) {
+                lastSpokenAt = persistedCursor
+            }
+
+            // Load local messages
             val local = repository.loadLocal()
             _state.update { it.copy(messages = local) }
             afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
-            lastSpokenAt = local
+
+            // Update lastSpokenAt from local messages if newer than persisted
+            val localMax = local
                 .filter { it.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) }
                 .maxOfOrNull { it.at } ?: EPOCH
+            if (localMax > lastSpokenAt) {
+                lastSpokenAt = localMax
+            }
+
+            // Mark local load complete - TTS can now fire for LIVE messages only
+            localLoadComplete = true
         }
 
         viewModelScope.launch {
@@ -136,7 +155,8 @@ class ChatViewModel(
                     ui.copy(inbox = config)
                 }
                 restartPolling(config)
-                if (canSendRemote) {
+                // Only pull after local load is complete (avoids TTS on history)
+                if (canSendRemote && localLoadComplete) {
                     refreshRemote(config)
                 }
             }
@@ -217,6 +237,7 @@ class ChatViewModel(
             )
         }
         restartPolling(config)
+        // refreshRemote checks localLoadComplete internally - safe to call
         viewModelScope.launch { refreshRemote(config) }
 
         val pending = pendingSendText
@@ -412,21 +433,29 @@ class ChatViewModel(
     val hasXaiAuth: Boolean get() = xaiAuthStore.isLoggedIn
 
     private suspend fun refreshRemote(config: InboxConfig) {
+        // Wait for local load to complete before pulling (avoids TTS on history)
+        if (!localLoadComplete) return
+
         runCatching { repository.pullReplies(config, afterCursor) }
             .onSuccess { remote ->
                 if (remote.isNotEmpty()) {
                     afterCursor = remote.maxOf { it.at }
                 }
+
+                // Only TTS messages that arrive LIVE (after local load, after lastSpokenAt)
                 val newAssistantMsgs = remote.filter { msg ->
                     msg.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) &&
                         msg.at > lastSpokenAt
                 }
                 if (newAssistantMsgs.isNotEmpty()) {
                     lastSpokenAt = newAssistantMsgs.maxOf { it.at }
+                    // Persist the cursor so reconnects don't re-TTS history
+                    repository.saveLastSpokenAt(lastSpokenAt)
                     newAssistantMsgs.sortedBy { it.at }.forEach { msg ->
                         _newAssistantMessages.trySend(msg)
                     }
                 }
+
                 _state.update { ui ->
                     ui.copy(messages = merge(ui.messages, remote), error = null)
                 }

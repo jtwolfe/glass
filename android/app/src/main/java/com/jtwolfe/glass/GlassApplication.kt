@@ -76,7 +76,10 @@ class GlassApplication : Application() {
             Log.d(TAG, "WebRTC first-pair disconnected")
             webRtcHandshakeInFlight.set(false)
             // WebRTC is optional LAN. Don't change connection state - WSS drives that.
-            onWebRtcDisconnected?.invoke()
+            // Don't retrigger reconnect if already in flight
+            if (!reconnectInFlight.get()) {
+                onWebRtcDisconnected?.invoke()
+            }
         }
         webRtcConnection = connection
         return connection
@@ -99,7 +102,10 @@ class GlassApplication : Application() {
             Log.d(TAG, "WebRTC reconnect disconnected")
             webRtcHandshakeInFlight.set(false)
             // WebRTC is optional LAN. Don't change connection state - WSS drives that.
-            onWebRtcDisconnected?.invoke()
+            // Don't retrigger reconnect if already in flight
+            if (!reconnectInFlight.get()) {
+                onWebRtcDisconnected?.invoke()
+            }
         }
         webRtcConnection = connection
         return connection

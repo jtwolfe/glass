@@ -362,6 +362,8 @@ class MainActivity : ComponentActivity() {
 
             // WSS exhausted - optionally try WebRTC for LAN
             // This does NOT make us "CONNECTED" - just provides a LAN talk path
+            // STAY RECONNECTING until the entire loop finishes
+            var webRtcGotLan = false
             if (!app.isWssConnected && app.pairingStore.isPaired) {
                 Log.d(TAG, "unifiedReconnect: WSS exhausted, trying WebRTC (LAN only, won't be 'online')")
 
@@ -395,13 +397,10 @@ class MainActivity : ComponentActivity() {
                     when (result) {
                         is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
                             Log.d(TAG, "unifiedReconnect: WebRTC LAN connected (not CONNECTED - WSS drives that)")
-                            // Don't call updateConnectionState - WebRTC doesn't make us CONNECTED
-                            // Just notify ViewModel for talk path availability
-                            chatViewModel.onWebRtcConnected()
+                            webRtcGotLan = true
                             fetchAgents()
-                            // Stay OFFLINE_PAIRED since WSS is not connected
-                            app.setConnectionState(ConnectionState.OFFLINE_PAIRED)
-                            return
+                            // DON'T change state here - stay RECONNECTING until loop finishes
+                            break
                         }
                         else -> {
                             Log.d(TAG, "unifiedReconnect: WebRTC attempt $webRtcAttempts failed: $result")
@@ -412,9 +411,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // All attempts failed - we're offline (but still paired)
-            Log.d(TAG, "unifiedReconnect: all attempts failed - OFFLINE_PAIRED")
+            // Loop finished - NOW set final state
+            // WSS is not connected, so we're OFFLINE_PAIRED (even if WebRTC LAN is up)
+            Log.d(TAG, "unifiedReconnect: loop finished - OFFLINE_PAIRED (webRtcLan=$webRtcGotLan)")
             app.setConnectionState(ConnectionState.OFFLINE_PAIRED)
+            if (webRtcGotLan) {
+                // Notify ViewModel now that state is stable
+                chatViewModel.onWebRtcConnected()
+            }
             if (pendingText != null) {
                 chatViewModel.onReconnectFailed()
             }

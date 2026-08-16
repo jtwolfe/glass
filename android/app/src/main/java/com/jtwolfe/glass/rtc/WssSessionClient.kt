@@ -66,6 +66,45 @@ class WssSessionClient(
         .readTimeout(0, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                Log.d(TAG, "DNS: resolving $hostname")
+                return try {
+                    val addresses = java.net.InetAddress.getAllByName(hostname).toList()
+                    Log.d(TAG, "DNS: $hostname -> ${addresses.map { it.hostAddress }}")
+                    addresses
+                } catch (e: Exception) {
+                    Log.e(TAG, "DNS: failed to resolve $hostname: ${e.javaClass.simpleName}: ${e.message}")
+                    throw e
+                }
+            }
+        })
+        .eventListener(object : okhttp3.EventListener() {
+            override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) {
+                Log.d(TAG, "EventListener: connectStart to ${inetSocketAddress.address?.hostAddress}:${inetSocketAddress.port}")
+            }
+            override fun connectEnd(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?) {
+                Log.d(TAG, "EventListener: connectEnd protocol=$protocol")
+            }
+            override fun connectFailed(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?, ioe: java.io.IOException) {
+                Log.e(TAG, "EventListener: connectFailed to ${inetSocketAddress.address?.hostAddress}: ${ioe.javaClass.simpleName}: ${ioe.message}")
+            }
+            override fun secureConnectStart(call: okhttp3.Call) {
+                Log.d(TAG, "EventListener: secureConnectStart (TLS handshake)")
+            }
+            override fun secureConnectEnd(call: okhttp3.Call, handshake: okhttp3.Handshake?) {
+                Log.d(TAG, "EventListener: secureConnectEnd tlsVersion=${handshake?.tlsVersion}")
+            }
+            override fun callStart(call: okhttp3.Call) {
+                Log.d(TAG, "EventListener: callStart ${call.request().url}")
+            }
+            override fun callEnd(call: okhttp3.Call) {
+                Log.d(TAG, "EventListener: callEnd")
+            }
+            override fun callFailed(call: okhttp3.Call, ioe: java.io.IOException) {
+                Log.e(TAG, "EventListener: callFailed ${ioe.javaClass.simpleName}: ${ioe.message}")
+            }
+        })
         .build()
 
     private val webSocketRef = AtomicReference<WebSocket?>(null)
@@ -164,8 +203,19 @@ class WssSessionClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val code = response?.code ?: -1
-                val msg = "${t.javaClass.simpleName}: ${t.message} (HTTP $code)"
+                val responseMsg = response?.message ?: "no response"
+                val msg = "${t.javaClass.simpleName}: ${t.message} (HTTP $code: $responseMsg)"
                 Log.w(TAG, "onFailure: $msg")
+
+                // Log full exception chain for LTE debugging
+                var cause: Throwable? = t.cause
+                var depth = 1
+                while (cause != null && depth < 5) {
+                    Log.w(TAG, "onFailure: cause[$depth] ${cause.javaClass.simpleName}: ${cause.message}")
+                    cause = cause.cause
+                    depth++
+                }
+
                 errorRef.set(msg)
                 val deferred = connectDeferred.getAndSet(null)
                 if (deferred != null && !deferred.isCompleted) {

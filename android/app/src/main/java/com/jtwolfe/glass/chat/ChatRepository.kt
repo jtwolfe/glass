@@ -33,6 +33,7 @@ class ChatRepository(
     private val wssClientProvider: (() -> WssSessionClient?)? = null,
 ) {
     private val messagesKey = stringPreferencesKey("messages_json")
+    private val lastSpokenAtKey = stringPreferencesKey("last_spoken_at")
 
     suspend fun loadLocal(): List<V0Message> {
         val raw = context.localChatStore.data.map { it[messagesKey].orEmpty() }.first()
@@ -41,6 +42,22 @@ class ChatRepository(
 
     suspend fun saveLocal(messages: List<V0Message>) {
         context.localChatStore.edit { it[messagesKey] = V0Message.listToJson(messages) }
+    }
+
+    /**
+     * Load persisted lastSpokenAt cursor.
+     * Used to prevent TTS from firing on history during reconnects.
+     */
+    suspend fun loadLastSpokenAt(): String? {
+        return context.localChatStore.data.map { it[lastSpokenAtKey] }.first()
+    }
+
+    /**
+     * Persist lastSpokenAt cursor.
+     * Called after TTS fires for new messages, so reconnects don't re-TTS.
+     */
+    suspend fun saveLastSpokenAt(cursor: String) {
+        context.localChatStore.edit { it[lastSpokenAtKey] = cursor }
     }
 
     suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> {
