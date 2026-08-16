@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
     private var pairing by mutableStateOf<PairingInvite?>(null)
     private var xaiLoginLoading by mutableStateOf(false)
     private var selectedVoiceId by mutableStateOf(VoiceSettings.DEFAULT_VOICE)
-    private var availableAgents by mutableStateOf(listOf(AgentSettings.DEFAULT_AGENT))
+    private var availableAgents by mutableStateOf<List<Agent>>(emptyList())
     private var isAssistRecording by mutableStateOf(false)
     private var assistTimeoutJob: Job? = null
     private var currentConnectionState by mutableStateOf(ConnectionState.UNPAIRED)
@@ -555,7 +555,7 @@ class MainActivity : ComponentActivity() {
             }
         }?.launchIn(lifecycleScope)
 
-        chatViewModel.newAshleighMessages.onEach { message ->
+        chatViewModel.newAssistantMessages.onEach { message ->
             val id = message.id
 
             // Try xAI TTS first when logged in
@@ -664,9 +664,9 @@ class MainActivity : ComponentActivity() {
     private fun requestMicPermission() {
         if (hasMicPermission) return
         AlertDialog.Builder(this)
-            .setTitle("Talk to Ashleigh")
+            .setTitle("Voice Input")
             .setMessage(
-                "Glass uses the microphone so Jamie can talk to Ashleigh. " +
+                "Glass uses the microphone for voice input. " +
                     "When logged into xAI, speech is sent to api.x.ai/v1/stt. " +
                     "Otherwise, Android's on-device recognizer is used. " +
                     "The transcript is posted as Jamie's message.",

@@ -44,8 +44,8 @@ data class ChatUiState(
     val sttError: SttError? = null,
     val isListening: Boolean = false,
     val partialTranscript: String = "",
-    val selectedAgentName: String = "Ashleigh",
-    val selectedAgentId: String = "28b14c15-d85a-4fdf-9d64-770a4d0d4084",
+    val selectedAgentName: String = "Glass",
+    val selectedAgentId: String = "",
 )
 
 data class SttError(
@@ -77,8 +77,8 @@ class ChatViewModel(
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
-    private val _newAshleighMessages = Channel<V0Message>(Channel.BUFFERED)
-    val newAshleighMessages = _newAshleighMessages.receiveAsFlow()
+    private val _newAssistantMessages = Channel<V0Message>(Channel.BUFFERED)
+    val newAssistantMessages = _newAssistantMessages.receiveAsFlow()
 
     private var pollJob: Job? = null
     private var afterCursor: String = EPOCH
@@ -104,7 +104,7 @@ class ChatViewModel(
             _state.update { it.copy(messages = local) }
             afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
             lastSpokenAt = local
-                .filter { it.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) }
+                .filter { it.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) }
                 .maxOfOrNull { it.at } ?: EPOCH
         }
 
@@ -388,14 +388,14 @@ class ChatViewModel(
                 if (remote.isNotEmpty()) {
                     afterCursor = remote.maxOf { it.at }
                 }
-                val newAshleigh = remote.filter { msg ->
-                    msg.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) &&
+                val newAssistantMsgs = remote.filter { msg ->
+                    msg.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) &&
                         msg.at > lastSpokenAt
                 }
-                if (newAshleigh.isNotEmpty()) {
-                    lastSpokenAt = newAshleigh.maxOf { it.at }
-                    newAshleigh.sortedBy { it.at }.forEach { msg ->
-                        _newAshleighMessages.trySend(msg)
+                if (newAssistantMsgs.isNotEmpty()) {
+                    lastSpokenAt = newAssistantMsgs.maxOf { it.at }
+                    newAssistantMsgs.sortedBy { it.at }.forEach { msg ->
+                        _newAssistantMessages.trySend(msg)
                     }
                 }
                 _state.update { ui ->

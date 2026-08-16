@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Glass</string>
-    <string name="peer_name">Ashleigh</string>
+    <string name="peer_name">Assistant</string>
     <string name="self_name">Jamie</string>
 </resources>

@@ -11,7 +11,7 @@ data class V0Message(
     val at: String,
 ) {
     val isOutgoing: Boolean get() = from.equals(FROM_JAMIE, ignoreCase = true)
-    val displayName: String get() = if (isOutgoing) "Jamie" else "Ashleigh"
+    val displayName: String get() = if (isOutgoing) "Jamie" else "Assistant"
 
     fun toJson(): JSONObject = JSONObject()
         .put("from", from)
@@ -21,7 +21,7 @@ data class V0Message(
 
     companion object {
         const val FROM_JAMIE = "jamie"
-        const val FROM_ASHLEIGH = "ashleigh"
+        const val FROM_ASSISTANT = "ashleigh"
 
         fun outgoing(text: String, at: Instant = Instant.now()): V0Message =
             V0Message(from = FROM_JAMIE, text = text, at = at.toString())
@@ -29,7 +29,7 @@ data class V0Message(
         fun fromJson(obj: JSONObject): V0Message? {
             val text = obj.optString("text").trim()
             if (text.isEmpty()) return null
-            val from = obj.optString("from").ifBlank { FROM_ASHLEIGH }
+            val from = obj.optString("from").ifBlank { FROM_ASSISTANT }
             val at = obj.optString("at").ifBlank { Instant.now().toString() }
             val id = obj.optString("id").ifBlank { null }
             return V0Message(id = id, from = from, text = text, at = at)
