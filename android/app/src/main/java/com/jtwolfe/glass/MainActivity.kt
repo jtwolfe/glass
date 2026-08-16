@@ -66,6 +66,8 @@ class MainActivity : ComponentActivity() {
     private var xaiLoginLoading by mutableStateOf(false)
     private var selectedVoiceId by mutableStateOf(VoiceSettings.DEFAULT_VOICE)
     private var availableAgents by mutableStateOf(listOf(AgentSettings.DEFAULT_AGENT))
+    private var isAssistRecording by mutableStateOf(false)
+    private var assistTimeoutJob: Job? = null
 
     private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
@@ -593,7 +595,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         speechHelper?.reset()
-        xaiRecorder?.cancel()
+        if (!isAssistRecording) {
+            xaiRecorder?.cancel()
+        }
         stopReplyAudio()
     }
 
@@ -608,7 +612,7 @@ class MainActivity : ComponentActivity() {
     private fun handleAssistIntent(intent: Intent?) {
         if (intent?.action == Intent.ACTION_ASSIST) {
             if (hasMicPermission) {
-                startListening()
+                startAssistListening()
             } else {
                 pendingAutoListen = true
                 requestMicPermission()
@@ -647,6 +651,8 @@ class MainActivity : ComponentActivity() {
         }
         stopReplyAudio()
         ttsHelper?.stop()
+        assistTimeoutJob?.cancel()
+        isAssistRecording = false
 
         val app = application as GlassApplication
         if (app.xaiAuthStore.isLoggedIn) {
@@ -654,14 +660,54 @@ class MainActivity : ComponentActivity() {
             if (started) {
                 chatViewModel.onListeningStateChange(true, "")
             } else {
-                Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
+                chatViewModel.setSttError(SttError("Failed to start recording"))
             }
         } else {
             speechHelper?.startListening()
         }
     }
 
+    private fun startAssistListening() {
+        if (!hasMicPermission) {
+            requestMicPermission()
+            return
+        }
+        stopReplyAudio()
+        ttsHelper?.stop()
+        assistTimeoutJob?.cancel()
+
+        val app = application as GlassApplication
+        if (app.xaiAuthStore.isLoggedIn) {
+            val started = xaiRecorder?.startRecording() == true
+            if (started) {
+                isAssistRecording = true
+                chatViewModel.onListeningStateChange(true, "")
+                assistTimeoutJob = lifecycleScope.launch {
+                    delay(ASSIST_TIMEOUT_MS)
+                    if (isAssistRecording && xaiRecorder?.isActive == true) {
+                        stopAssistListening()
+                    }
+                }
+            } else {
+                chatViewModel.setSttError(SttError("Failed to start recording"))
+            }
+        } else {
+            speechHelper?.startListening()
+        }
+    }
+
+    private fun stopAssistListening() {
+        assistTimeoutJob?.cancel()
+        assistTimeoutJob = null
+        isAssistRecording = false
+        stopListening()
+    }
+
     private fun stopListening() {
+        assistTimeoutJob?.cancel()
+        assistTimeoutJob = null
+        isAssistRecording = false
+
         if (xaiRecorder?.isActive == true) {
             chatViewModel.onListeningStateChange(false, "")
             lifecycleScope.launch {
@@ -700,6 +746,10 @@ class MainActivity : ComponentActivity() {
         } else {
             speechHelper?.stopListening()
         }
+    }
+
+    companion object {
+        private const val ASSIST_TIMEOUT_MS = 10_000L
     }
 
     private fun refreshAssistantRole() {

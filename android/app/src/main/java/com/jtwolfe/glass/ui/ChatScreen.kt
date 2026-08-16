@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -310,15 +312,27 @@ private fun Composer(
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface),
     ) {
-        if (isListening && partialTranscript.isNotEmpty()) {
-            Text(
-                text = partialTranscript,
+        if (isListening) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = if (partialTranscript.isNotEmpty()) partialTranscript else "Listening...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         Row(
             modifier = Modifier
@@ -327,39 +341,49 @@ private fun Composer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(
-                onClick = { },
-                enabled = !sending,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isListening) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
+            Surface(
+                modifier = Modifier
+                    .size(48.dp)
+                    .pointerInput(hasMicPermission, sending, isListening) {
+                        if (sending) return@pointerInput
+                        detectTapGestures(
+                            onTap = {
+                                if (isListening) {
+                                    onStopListening()
+                                }
+                            },
+                            onPress = {
+                                if (!hasMicPermission) {
+                                    onRequestMicPermission()
+                                } else if (!isListening) {
+                                    onStartListening()
+                                    tryAwaitRelease()
+                                    onStopListening()
+                                }
+                            },
+                        )
                     },
-                    contentColor = if (isListening) {
-                        MaterialTheme.colorScheme.onError
-                    } else {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    },
-                ),
-                modifier = Modifier.pointerInput(hasMicPermission) {
-                    detectTapGestures(
-                        onPress = {
-                            if (!hasMicPermission) {
-                                onRequestMicPermission()
-                            } else {
-                                onStartListening()
-                                tryAwaitRelease()
-                                onStopListening()
-                            }
-                        },
-                    )
+                shape = RoundedCornerShape(24.dp),
+                color = if (isListening) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
                 },
             ) {
-                Icon(
-                    Icons.Filled.Mic,
-                    contentDescription = if (isListening) "Listening..." else "Hold to talk",
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = if (isListening) "Tap to stop" else "Hold to talk",
+                        tint = if (isListening) {
+                            MaterialTheme.colorScheme.onError
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
+                    )
+                }
             }
             OutlinedTextField(
                 value = draft,
