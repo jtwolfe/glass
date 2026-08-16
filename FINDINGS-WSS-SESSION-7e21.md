@@ -7,6 +7,116 @@
 
 ---
 
+## Hypothesis Verification (Aug 16 follow-up)
+
+> Hypothesis: `/session` history push on hello/reconnect. TTS of old messages is "push the transcript" not "after the cursor."
+
+### Finding 1: What the peer sends on WSS hello/reconnect
+
+**DISCARDED: The peer does NOT push history on hello.**
+
+Evidence from `protocol.py`:
+
+```python
+async def _handle_hello(self, msg: dict) -> str | None:
+    """Handle hello message to establish stable topic."""
+    phone_peer = msg.get("peer", "")
+    # ... validation ...
+    self._phone_peer = phone_peer
+    if self._on_hello:
+        await self._on_hello(phone_peer)
+    # Hello doesn't require a response per protocol
+    return None  # <-- NO RESPONSE, NO PUSH
+```
+
+The server's message store is `self._messages: list[Message] = []` (line 71) — an **in-memory list that starts empty** on each server start. Messages are only added when the phone sends via `_handle_send()`.
+
+History is returned ONLY via explicit `_handle_replies()` when the client requests it:
+```python
+async def _handle_replies(self, msg: dict) -> str:
+    after = msg.get("after", "")
+    for m in self._messages:
+        if not after or m.at > after:  # <-- Respects cursor
+            filtered.append(...)
+```
+
+**However**: The WSS `/session` endpoint doesn't exist on the server, so none of this code runs for WSS. Current code only handles WebRTC DataChannel via ntfy.
+
+### Finding 2: What the app does with a history/replies dump — does every line call TTS?
+
+**CONFIRMED: Every "new" assistant message triggers TTS.**
+
+Flow in `ChatViewModel.kt`:
+
+```kotlin
+// refreshRemote() lines 420-428
+val newAssistantMsgs = remote.filter { msg ->
+    msg.from.equals("ashleigh", ignoreCase = true) &&
+        msg.at > lastSpokenAt  // <-- Guard: only messages newer than last spoken
+}
+newAssistantMsgs.sortedBy { it.at }.forEach { msg ->
+    _newAssistantMessages.trySend(msg)  // <-- EACH goes to TTS queue
+}
+```
+
+And in `MainActivity.kt` lines 781-806:
+```kotlin
+chatViewModel.newAssistantMessages.onEach { message ->
+    // Try xAI TTS, inbox audio, or on-device TTS
+    ttsHelper?.speak(message.text)  // <-- TTS fires
+}.launchIn(lifecycleScope)
+```
+
+**Root cause of TTS replay**: The `lastSpokenAt` cursor is initialized from local history at app launch:
+```kotlin
+lastSpokenAt = local
+    .filter { it.from.equals("ashleigh", ignoreCase = true) }
+    .maxOfOrNull { it.at } ?: EPOCH
+```
+
+If local history is empty/stale, ANY assistant message from server where `msg.at > EPOCH` (i.e., all of them) will fire TTS.
+
+### Finding 3: Whether CONNECTED still tracks WebRTC/DataChannel anywhere — causes status flicker?
+
+**CONFIRMED: Two conflicting status systems cause race/flicker.**
+
+| System | Location | What it tracks |
+|--------|----------|----------------|
+| `GlassApplication.connectionState` | StateFlow | WSS only: `wssOpen → CONNECTED` |
+| `ChatUiState.status` | String | Set by `onAnyPathConnected()` for EITHER path |
+
+Race condition when WebRTC connects:
+
+```kotlin
+// unifiedReconnect() lines 399-404
+chatViewModel.onWebRtcConnected()  // → status = "Connected" (ChatUiState)
+app.setConnectionState(OFFLINE_PAIRED)  // → collector → status = "Offline"
+```
+
+Sequence:
+1. `onWebRtcConnected()` → `onAnyPathConnected()` → `_state.status = "Connected"` **AND** `refreshRemote()` 
+2. `app.setConnectionState(OFFLINE_PAIRED)` (same call site)
+3. MainActivity collector: `chatViewModel.updateConnectionStatus(OFFLINE_PAIRED)` → `status = "Offline"`
+
+UI flickers "Connected" → "Offline" in rapid succession. **Also triggers `refreshRemote()` which may fire TTS.**
+
+### Finding 4: Whether failed first WSS upgrade is retried on network change
+
+**CONFIRMED: No automatic retry on network change.**
+
+- No `ConnectivityManager` or `NetworkCallback` registered
+- `WssSessionClient.startReconnect()` exists but is **never called**
+- Retry only triggers via:
+  - `onResume()` (app foreground)
+  - Disconnect callbacks (only if socket WAS open)
+  - 8-second polling (only calls `refreshRemote()`, not reconnect)
+
+If first WSS upgrade fails (e.g., WiFi off, mobile-only), and then user switches networks:
+- If socket was never open → no disconnect event → **no retry**
+- Only `onResume()` can trigger retry (user must background/foreground app)
+
+---
+
 ## A. What the Code Actually Does Today
 
 ### Android App Architecture
