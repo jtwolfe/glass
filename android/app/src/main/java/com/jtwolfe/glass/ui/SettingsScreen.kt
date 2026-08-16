@@ -47,7 +47,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.jtwolfe.glass.ConnectionState
 import com.jtwolfe.glass.auth.XaiAuthBundle
+import com.jtwolfe.glass.displayText
 import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.settings.Agent
@@ -59,6 +61,7 @@ fun SettingsScreen(
     inbox: InboxConfig,
     xaiAuth: XaiAuthBundle?,
     pairing: PairingInvite?,
+    connectionState: ConnectionState,
     isDefaultAssistant: Boolean,
     xaiLoginLoading: Boolean,
     selectedVoiceId: String,
@@ -135,6 +138,7 @@ fun SettingsScreen(
             // Inbox pairing section
             PairingSection(
                 pairing = pairing,
+                connectionState = connectionState,
                 onOpenPairing = onOpenPairing,
                 onClearPairing = onClearPairing,
             )
@@ -353,30 +357,43 @@ private fun AssistantSection(
 @Composable
 private fun PairingSection(
     pairing: PairingInvite?,
+    connectionState: ConnectionState,
     onOpenPairing: () -> Unit,
     onClearPairing: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Plugin Connection", style = MaterialTheme.typography.titleMedium)
 
-        if (pairing != null && pairing.isValid) {
+        val hasPairing = pairing != null && pairing.isValid
+
+        if (hasPairing) {
+            val statusColor = when (connectionState) {
+                ConnectionState.CONNECTED -> MaterialTheme.colorScheme.primaryContainer
+                ConnectionState.RECONNECTING -> MaterialTheme.colorScheme.tertiaryContainer
+                ConnectionState.OFFLINE_PAIRED -> MaterialTheme.colorScheme.secondaryContainer
+                ConnectionState.UNPAIRED -> MaterialTheme.colorScheme.surfaceVariant
+            }
+            val onStatusColor = when (connectionState) {
+                ConnectionState.CONNECTED -> MaterialTheme.colorScheme.onPrimaryContainer
+                ConnectionState.RECONNECTING -> MaterialTheme.colorScheme.onTertiaryContainer
+                ConnectionState.OFFLINE_PAIRED -> MaterialTheme.colorScheme.onSecondaryContainer
+                ConnectionState.UNPAIRED -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                ),
+                colors = CardDefaults.cardColors(containerColor = statusColor),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        if (pairing.isV1) "Connected via WebRTC" else "Connected (legacy)",
+                        connectionState.displayText,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = onStatusColor,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Code: ${pairing.shortCode}",
+                        "Code: ${pairing?.shortCode ?: ""}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = onStatusColor,
                     )
                 }
             }
@@ -384,7 +401,7 @@ private fun PairingSection(
                 onClick = onClearPairing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Disconnect")
+                Text("Unpair")
             }
         } else {
             Text(

@@ -1,23 +1,23 @@
 package com.jtwolfe.glass.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jtwolfe.glass.ConnectionState
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.chat.ChatViewModel
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.settings.Agent
-import kotlinx.coroutines.flow.Flow
 
 @Composable
 fun GlassRoot(
     viewModel: ChatViewModel,
     xaiAuth: XaiAuthBundle?,
     pairing: PairingInvite?,
+    connectionState: ConnectionState,
     isDefaultAssistant: Boolean,
     hasMicPermission: Boolean,
     xaiLoginLoading: Boolean,
@@ -43,6 +43,7 @@ fun GlassRoot(
             inbox = state.inbox,
             xaiAuth = xaiAuth,
             pairing = pairing,
+            connectionState = connectionState,
             isDefaultAssistant = isDefaultAssistant,
             xaiLoginLoading = xaiLoginLoading,
             selectedVoiceId = selectedVoiceId,

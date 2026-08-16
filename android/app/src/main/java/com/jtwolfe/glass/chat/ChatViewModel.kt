@@ -5,8 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.jtwolfe.glass.ConnectionState
 import com.jtwolfe.glass.GlassApplication
 import com.jtwolfe.glass.auth.TokenResult
+import com.jtwolfe.glass.displayText
 import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
@@ -67,6 +69,8 @@ class ChatViewModel(
     private val agentSettings: AgentSettings,
     private val pluginClient: PluginClient? = null,
     private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
+    private val connectionStateProvider: (() -> ConnectionState)? = null,
+    private val onReconnectRequest: ((pendingText: String?) -> Unit)? = null,
     private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
 ) : AndroidViewModel(application) {
 
@@ -80,8 +84,13 @@ class ChatViewModel(
     private var afterCursor: String = EPOCH
     private var lastSpokenAt: String = EPOCH
 
+    private var pendingSendText: String? = null
+
+    private val connectionState: ConnectionState
+        get() = connectionStateProvider?.invoke() ?: ConnectionState.UNPAIRED
+
     private val isWebRtcConnected: Boolean
-        get() = webRtcConnectionProvider?.invoke()?.isConnected == true
+        get() = connectionState == ConnectionState.CONNECTED
 
     private val isPluginConnected: Boolean
         get() = pluginClient?.isConnected == true && pluginClient.isPaired
@@ -112,15 +121,7 @@ class ChatViewModel(
         viewModelScope.launch {
             settings.config.collect { config ->
                 _state.update { ui ->
-                    ui.copy(
-                        inbox = config,
-                        status = when {
-                            isWebRtcConnected -> "Connected"
-                            isPluginConnected -> "Connected (TCP)"
-                            config.isHttpConfigured -> "HTTP (${config.source})"
-                            else -> "Offline — scan QR to connect"
-                        },
-                    )
+                    ui.copy(inbox = config)
                 }
                 restartPolling(config)
                 if (canSendRemote) {
@@ -128,6 +129,10 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    fun updateConnectionStatus(state: ConnectionState) {
+        _state.update { it.copy(status = state.displayText) }
     }
 
     fun onDraftChange(value: String) {
@@ -153,7 +158,7 @@ class ChatViewModel(
         val config = _state.value.inbox
         _state.update { ui ->
             ui.copy(
-                status = "Plugin connected (v1 TCP)",
+                status = "Connected (TCP)",
             )
         }
         restartPolling(config)
@@ -178,31 +183,46 @@ class ChatViewModel(
         val config = _state.value.inbox
         _state.update { ui ->
             ui.copy(
-                status = "Plugin connected (WebRTC DataChannel)",
+                status = ConnectionState.CONNECTED.displayText,
+                error = null,
             )
         }
         restartPolling(config)
         viewModelScope.launch { refreshRemote(config) }
+
+        val pending = pendingSendText
+        if (pending != null) {
+            pendingSendText = null
+            viewModelScope.launch {
+                delay(100)
+                _state.update { it.copy(draft = pending) }
+                send()
+            }
+        }
     }
 
     fun onWebRtcDisconnected() {
         val config = _state.value.inbox
         _state.update { ui ->
-            ui.copy(
-                status = when {
-                    isPluginConnected -> "Connected (TCP)"
-                    config.isHttpConfigured -> "HTTP (${config.source})"
-                    else -> "Offline — scan QR to connect"
-                },
-            )
+            ui.copy(status = connectionState.displayText)
         }
         restartPolling(config)
     }
 
     fun onReconnecting() {
         _state.update { ui ->
-            ui.copy(status = "Reconnecting...")
+            ui.copy(status = ConnectionState.RECONNECTING.displayText)
         }
+    }
+
+    fun onReconnectFailed() {
+        _state.update { ui ->
+            ui.copy(
+                status = connectionState.displayText,
+                error = "Could not reconnect — tap to retry",
+            )
+        }
+        pendingSendText = null
     }
 
     fun refresh() {
@@ -215,6 +235,27 @@ class ChatViewModel(
     fun send() {
         val text = _state.value.draft.trim()
         if (text.isEmpty() || _state.value.sending) return
+
+        val currentState = connectionState
+        if (currentState == ConnectionState.OFFLINE_PAIRED) {
+            pendingSendText = text
+            _state.update {
+                it.copy(
+                    draft = "",
+                    error = "Reconnecting to send...",
+                )
+            }
+            onReconnectRequest?.invoke(text)
+            return
+        }
+
+        if (currentState == ConnectionState.UNPAIRED && !_state.value.inbox.isHttpConfigured && !isPluginConnected) {
+            _state.update {
+                it.copy(error = "Not connected — pair with plugin first")
+            }
+            return
+        }
+
         val outgoing = V0Message.outgoing(text)
         val agentId = _state.value.selectedAgentId
         viewModelScope.launch {
@@ -393,12 +434,16 @@ class ChatViewModel(
     companion object {
         private const val EPOCH = "1970-01-01T00:00:00Z"
 
-        fun factory(application: Application): ViewModelProvider.Factory =
+        fun factory(
+            application: Application,
+            onReconnectRequest: ((pendingText: String?) -> Unit)? = null,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     val app = application as GlassApplication
                     val webRtcProvider: () -> WebRtcPeerConnection? = { app.webRtcConnection }
+                    val connectionStateProvider: () -> ConnectionState = { app.connectionState.value }
                     return ChatViewModel(
                         application = app,
                         settings = app.inboxSettings,
@@ -413,6 +458,8 @@ class ChatViewModel(
                         agentSettings = app.agentSettings,
                         pluginClient = app.pluginClient,
                         webRtcConnectionProvider = webRtcProvider,
+                        connectionStateProvider = connectionStateProvider,
+                        onReconnectRequest = onReconnectRequest,
                     ) as T
                 }
             }

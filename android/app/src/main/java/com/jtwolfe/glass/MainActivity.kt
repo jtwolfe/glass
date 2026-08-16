@@ -28,6 +28,7 @@ import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
 import com.jtwolfe.glass.chat.SttError
 import com.jtwolfe.glass.chat.TranscribeResult
+import com.jtwolfe.glass.displayText
 import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.DiscoveryState
 import com.jtwolfe.glass.pairing.LanDiscovery
@@ -57,7 +58,11 @@ import java.time.Instant
 
 class MainActivity : ComponentActivity() {
 
-    private val chatViewModel: ChatViewModel by viewModels { ChatViewModel.factory(application) }
+    private val chatViewModel: ChatViewModel by viewModels {
+        ChatViewModel.factory(application) { pendingText ->
+            lifecycleScope.launch { attemptReconnect(pendingText) }
+        }
+    }
 
     private var isAssistant by mutableStateOf(false)
     private var hasMicPermission by mutableStateOf(false)
@@ -68,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var availableAgents by mutableStateOf(listOf(AgentSettings.DEFAULT_AGENT))
     private var isAssistRecording by mutableStateOf(false)
     private var assistTimeoutJob: Job? = null
+    private var currentConnectionState by mutableStateOf(ConnectionState.UNPAIRED)
 
     private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
@@ -110,6 +116,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = chatViewModel,
                     xaiAuth = xaiAuth,
                     pairing = pairing,
+                    connectionState = currentConnectionState,
                     isDefaultAssistant = isAssistant,
                     hasMicPermission = hasMicPermission,
                     xaiLoginLoading = xaiLoginLoading,
@@ -151,7 +158,14 @@ class MainActivity : ComponentActivity() {
 
         app.onWebRtcDisconnected = {
             lifecycleScope.launch {
-                attemptReconnect()
+                attemptReconnect(null)
+            }
+        }
+
+        lifecycleScope.launch {
+            app.connectionState.collect { state ->
+                currentConnectionState = state
+                chatViewModel.updateConnectionStatus(state)
             }
         }
 
@@ -198,12 +212,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun attemptReconnect() {
+    private suspend fun attemptReconnect(pendingText: String?) {
         val app = application as GlassApplication
         val invite = app.pairingStore.currentInvite
 
         if (invite == null || !invite.isV1 || invite.isExpired) {
+            app.updateConnectionStateFromInvite()
             chatViewModel.onWebRtcDisconnected()
+            if (pendingText != null) {
+                chatViewModel.onReconnectFailed()
+            }
             return
         }
 
@@ -232,6 +250,7 @@ class MainActivity : ComponentActivity() {
                 is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
                     app.setConnectionState(ConnectionState.CONNECTED)
                     chatViewModel.onWebRtcConnected()
+                    fetchAgents()
                     return
                 }
                 else -> {
@@ -240,8 +259,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        app.setConnectionState(ConnectionState.DISCONNECTED)
+        app.updateConnectionStateFromInvite()
         chatViewModel.onWebRtcDisconnected()
+        if (pendingText != null) {
+            chatViewModel.onReconnectFailed()
+        }
     }
 
     private fun startXaiLogin() {
@@ -415,14 +437,16 @@ class MainActivity : ComponentActivity() {
                     }
                     is ConnectResult.Timeout -> {
                         app.closeWebRtcConnection()
+                        app.updateConnectionStateFromInvite()
                         Toast.makeText(
                             this@MainActivity,
-                            "Connection timed out. Plugin may not be reachable (hard NAT).",
+                            "Connection timed out — tap to retry",
                             Toast.LENGTH_LONG,
                         ).show()
                     }
                     is ConnectResult.Error -> {
                         app.closeWebRtcConnection()
+                        app.updateConnectionStateFromInvite()
                         Toast.makeText(
                             this@MainActivity,
                             "Connection failed: ${connectResult.message}",
