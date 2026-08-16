@@ -276,8 +276,15 @@ class MainActivity : ComponentActivity() {
     private suspend fun unifiedReconnect(pendingText: String?) {
         val app = application as GlassApplication
 
+        val isPaired = app.pairingStore.isPaired
+        val wssConnected = app.wssClient?.isConnected == true
+        val dcConnected = app.webRtcConnection?.isConnected == true
+        val inFlight = app.reconnectInFlight.get()
+
+        Log.d(TAG, "unifiedReconnect: entry - isPaired=$isPaired wssConnected=$wssConnected dcConnected=$dcConnected inFlight=$inFlight pendingText=${pendingText != null}")
+
         // Not paired? Nothing to reconnect
-        if (!app.pairingStore.isPaired) {
+        if (!isPaired) {
             Log.d(TAG, "unifiedReconnect: not paired, skipping")
             app.updateConnectionState()
             if (pendingText != null) {
@@ -287,8 +294,8 @@ class MainActivity : ComponentActivity() {
         }
 
         // Already connected? Nothing to do
-        if (app.isAnyPathConnected) {
-            Log.d(TAG, "unifiedReconnect: already connected")
+        if (wssConnected || dcConnected) {
+            Log.d(TAG, "unifiedReconnect: already connected (wss=$wssConnected dc=$dcConnected)")
             app.updateConnectionState()
             return
         }
@@ -309,6 +316,8 @@ class MainActivity : ComponentActivity() {
         val invite = app.pairingStore.currentInvite
         val pub = invite?.pub
 
+        Log.d(TAG, "unifiedReconnect: phonePeer=${phonePeer.take(12)}... pub=${pub?.take(12) ?: "null"}...")
+
         try {
             // Phase 1: Try WSS with backoff (preferred path)
             var wssAttempts = 0
@@ -317,23 +326,25 @@ class MainActivity : ComponentActivity() {
                 wssAttempts++
                 val backoffMs = 2000L * wssAttempts.coerceAtMost(4)
 
-                Log.d(TAG, "unifiedReconnect: WSS attempt $wssAttempts (backoff ${backoffMs}ms)")
+                Log.d(TAG, "unifiedReconnect: WSS attempt $wssAttempts/$maxWssAttempts")
 
                 val wss = app.getOrCreateWssClient()
+                Log.d(TAG, "unifiedReconnect: got WSS client, calling connect")
                 val result = withContext(Dispatchers.IO) {
                     wss.connect(phonePeer, pub)
                 }
+                Log.d(TAG, "unifiedReconnect: WSS connect returned: $result")
 
                 when (result) {
                     is WssConnectResult.Success, is WssConnectResult.AlreadyConnected -> {
-                        Log.d(TAG, "unifiedReconnect: WSS connected")
+                        Log.d(TAG, "unifiedReconnect: WSS SUCCESS on attempt $wssAttempts")
                         app.updateConnectionState()
                         chatViewModel.onWssConnected()
                         fetchAgents()
                         return
                     }
                     else -> {
-                        Log.d(TAG, "unifiedReconnect: WSS attempt $wssAttempts failed: $result")
+                        // Already logged above
                     }
                 }
 
@@ -344,6 +355,7 @@ class MainActivity : ComponentActivity() {
                     return
                 }
 
+                Log.d(TAG, "unifiedReconnect: WSS failed, waiting ${backoffMs}ms before retry")
                 delay(backoffMs)
             }
 

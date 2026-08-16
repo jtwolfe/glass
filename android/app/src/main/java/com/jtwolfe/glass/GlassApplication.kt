@@ -123,11 +123,12 @@ class GlassApplication : Application() {
      * WSS is preferred when available; WebRTC DC is WiFi/fallback.
      */
     fun createWssClient(): WssSessionClient {
+        Log.d(TAG, "createWssClient: creating new client")
         wssClient?.close()
 
         val client = WssSessionClient(
             onDisconnected = {
-                Log.d(TAG, "WSS disconnected")
+                Log.d(TAG, "WSS disconnected callback")
                 // Don't immediately flip state - let reconnect logic handle it
                 if (!reconnectInFlight.get()) {
                     updateConnectionState()
@@ -135,7 +136,7 @@ class GlassApplication : Application() {
                 onWssDisconnected?.invoke()
             },
             onConnected = {
-                Log.d(TAG, "WSS connected")
+                Log.d(TAG, "WSS connected callback")
                 updateConnectionState()
                 onWssConnected?.invoke()
             },
@@ -146,7 +147,14 @@ class GlassApplication : Application() {
 
     /** Get or create WSS client (don't close existing) */
     fun getOrCreateWssClient(): WssSessionClient {
-        return wssClient ?: createWssClient()
+        val existing = wssClient
+        return if (existing != null && !existing.isClosed) {
+            Log.d(TAG, "getOrCreateWssClient: reusing existing client")
+            existing
+        } else {
+            Log.d(TAG, "getOrCreateWssClient: creating new client (existing=${existing != null})")
+            createWssClient()
+        }
     }
 
     fun setConnectionState(state: ConnectionState) {

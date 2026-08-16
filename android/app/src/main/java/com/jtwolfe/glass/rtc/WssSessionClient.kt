@@ -75,6 +75,7 @@ class WssSessionClient(
     @Volatile
     private var _isConnected = false
     val isConnected: Boolean get() = _isConnected
+    val isClosed: Boolean get() = closed.get()
 
     private var phonePeer: String? = null
     private var pub: String? = null
@@ -125,6 +126,8 @@ class WssSessionClient(
     }
 
     private suspend fun connectInternal(): WssConnectResult {
+        Log.d(TAG, "connectInternal: starting WebSocket connection to $WSS_URL")
+
         val deferred = CompletableDeferred<Boolean>()
         val errorRef = AtomicReference<String?>(null)
         connectDeferred.set(deferred)
@@ -132,6 +135,8 @@ class WssSessionClient(
         val request = Request.Builder()
             .url(WSS_URL)
             .build()
+
+        Log.d(TAG, "connectInternal: request built, creating WebSocket listener")
 
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -170,7 +175,14 @@ class WssSessionClient(
             }
         }
 
-        client.newWebSocket(request, listener)
+        Log.d(TAG, "connectInternal: calling OkHttp newWebSocket NOW")
+        try {
+            client.newWebSocket(request, listener)
+            Log.d(TAG, "connectInternal: newWebSocket returned, waiting for callback")
+        } catch (e: Exception) {
+            Log.e(TAG, "connectInternal: newWebSocket threw exception: ${e.javaClass.simpleName}: ${e.message}")
+            return WssConnectResult.Error("newWebSocket exception: ${e.message}")
+        }
 
         val success = deferred.await()
         connectDeferred.set(null)
