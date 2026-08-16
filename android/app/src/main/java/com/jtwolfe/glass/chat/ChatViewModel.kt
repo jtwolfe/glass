@@ -241,15 +241,25 @@ class ChatViewModel(
     /**
      * Transcribe audio. Prefers xAI STT when logged in, falls back to inbox STT.
      * Returns null if both fail (caller should use on-device recognition).
+     *
+     * @param audio Raw audio bytes (WAV format expected from XaiAudioRecorder)
+     * @param filename Suggested filename for the audio file
+     * @param contentType MIME type of the audio
      */
-    suspend fun transcribeAudio(audio: ByteArray): String? {
+    suspend fun transcribeAudio(
+        audio: ByteArray,
+        filename: String = "speech.wav",
+        contentType: String = "audio/wav",
+    ): String? {
         if (audio.isEmpty()) return null
 
         // Prefer xAI STT when logged in (bearer never leaves the phone)
         val xaiBearer = xaiAuthStore.getFreshAccessToken()
         if (xaiBearer != null) {
             val xaiResult = withContext(Dispatchers.IO) {
-                runCatching { xaiVoiceClient.transcribe(xaiBearer, audio) }.getOrNull()
+                runCatching {
+                    xaiVoiceClient.transcribe(xaiBearer, audio, filename, contentType)
+                }.getOrNull()
             }
             if (!xaiResult.isNullOrBlank()) {
                 return xaiResult

@@ -37,6 +37,7 @@ import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
 import com.jtwolfe.glass.voice.SpeechRecognizerHelper
 import com.jtwolfe.glass.voice.TtsHelper
+import com.jtwolfe.glass.voice.XaiAudioRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
@@ -59,6 +60,7 @@ class MainActivity : ComponentActivity() {
 
     private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
+    private var xaiRecorder: XaiAudioRecorder? = null
     private var replyPlayer: MediaPlayer? = null
     private var pendingAutoListen = false
 
@@ -398,6 +400,7 @@ class MainActivity : ComponentActivity() {
         speechHelper = SpeechRecognizerHelper(this) { transcript ->
             chatViewModel.onVoiceTranscript(transcript)
         }
+        xaiRecorder = XaiAudioRecorder(this)
 
         speechHelper?.state?.onEach { speechState ->
             val isListening = speechState.listeningState == ListeningState.LISTENING ||
@@ -484,12 +487,14 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         speechHelper?.reset()
+        xaiRecorder?.cancel()
         stopReplyAudio()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         speechHelper?.reset()
+        xaiRecorder?.cancel()
         stopReplyAudio()
         ttsHelper?.shutdown()
     }
@@ -536,11 +541,50 @@ class MainActivity : ComponentActivity() {
         }
         stopReplyAudio()
         ttsHelper?.stop()
-        speechHelper?.startListening()
+
+        val auth = xaiAuth
+        if (auth != null && !auth.isExpired) {
+            val started = xaiRecorder?.startRecording() == true
+            if (started) {
+                chatViewModel.onListeningStateChange(true, "")
+            } else {
+                Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            speechHelper?.startListening()
+        }
     }
 
     private fun stopListening() {
-        speechHelper?.stopListening()
+        val auth = xaiAuth
+        if (auth != null && !auth.isExpired && xaiRecorder?.isActive == true) {
+            chatViewModel.onListeningStateChange(false, "")
+            lifecycleScope.launch {
+                val audio = xaiRecorder?.stopRecording()
+                if (audio == null || audio.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No audio captured", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                chatViewModel.onListeningStateChange(true, "Transcribing...")
+                val transcript = withContext(Dispatchers.IO) {
+                    chatViewModel.transcribeAudio(audio)
+                }
+                chatViewModel.onListeningStateChange(false, "")
+
+                if (transcript.isNullOrBlank()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "xAI STT failed — check network or try again",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    chatViewModel.onVoiceTranscript(transcript)
+                }
+            }
+        } else {
+            speechHelper?.stopListening()
+        }
     }
 
     private fun refreshAssistantRole() {
