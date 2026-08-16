@@ -239,7 +239,7 @@ fun PairingScreen(
             Spacer(Modifier.weight(1f))
 
             Text(
-                "After scanning a v1 invite, the phone connects via ntfy.sh signaling to establish a " +
+                "After scanning a v1 invite, the phone connects via ntfy signaling to establish a " +
                     "WebRTC DataChannel. Chat never goes through ntfy. Hard NAT fails closed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

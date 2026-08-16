@@ -17,7 +17,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
- * ntfy.sh signaling for glass-pair v1 WebRTC pairing.
+ * ntfy signaling for glass-pair v1 WebRTC pairing.
  *
  * Topic types:
  * - Invite topic (first pair): SHA-256("glass-pair/v1\n{plugin_peer}\n{pub}\n{code}")
@@ -28,8 +28,8 @@ import java.util.concurrent.TimeUnit
  *   {"v":1,"t":"answer","sdp":"<sdp>"}
  *   {"v":1,"t":"ice","cand":"<candidate>"}
  *
- * Publish: POST https://ntfy.sh/{topic}  body = JSON (text/plain)
- * Subscribe: GET https://ntfy.sh/{topic}/json  (NDJSON stream)
+ * Publish: POST {NTFY_HOST}/{topic}  body = JSON (text/plain)
+ * Subscribe: GET {NTFY_HOST}/{topic}/json  (NDJSON stream)
  *   - Parse "event":"message" lines, payload is in "message" field
  *   - Ignore "event":"open", "event":"keepalive"
  *
@@ -39,7 +39,7 @@ class NtfySignaling private constructor(
     val topic: String,
 ) {
     companion object {
-        private const val NTFY_HOST = "https://ntfy.sh"
+        private const val NTFY_HOST = "https://glass.enphi.net/ntfy"
         private const val VERSION_PREFIX = "glass-pair/v1"
 
         fun fromInvite(peer: String, pub: String, code: String): NtfySignaling {

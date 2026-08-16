@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * WebRTC DataChannel connection for glass-pair v1.
  *
- * Signaling via ntfy.sh topic (computed from peer/pub/code).
+ * Signaling via ntfy topic (computed from peer/pub/code).
  * ICE: stun:stun.l.google.com:19302 ONLY. No TURN.
  * Fail closed if DataChannel doesn't form (hard NAT).
  *

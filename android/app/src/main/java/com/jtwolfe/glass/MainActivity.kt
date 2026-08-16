@@ -401,7 +401,7 @@ class MainActivity : ComponentActivity() {
             pairing = invite
 
             if (invite.isV1) {
-                // v1: Use ntfy.sh for WebRTC signaling (not LAN discovery)
+                // v1: Use ntfy for WebRTC signaling (not LAN discovery)
                 // First-pair topic = SHA-256("glass-pair/v1\n" + peer + "\n" + pub + "\n" + code)
                 // Chat NEVER goes to ntfy - only WebRTC offer/answer/ICE
                 Toast.makeText(
