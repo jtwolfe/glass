@@ -1,157 +1,145 @@
 # Glass Android
 
-Voice assistant app that connects to a glass-peer over WebRTC for chat.
+Jamie ↔ Ashleigh chat that can replace the default assistant on long-press home.
 
-## Quick Start
+Nash owns this client. Plugin is the pair target. Phone scans only. No container. HTTP inbox is parked.
 
-1. **Install** the APK (build from source or from release).
+---
+
+## Quick Start: Install → Pair → Talk
+
+1. **Install** the debug APK from GitHub Release `apk-debug-0.1.0` (`glass-debug-0.1.0.apk`). Sideload on device; allow unknown sources when prompted.
 
 2. **Set as default assistant**: Settings → Apps → Default apps → Digital assistant app → Glass.
 
-3. **Configure ntfy URL**: In app Settings, enter the public ntfy URL (e.g., `https://glass.example.com/ntfy`).
+3. **Grant microphone** when prompted on first voice use.
 
-4. **Grant microphone** when prompted on first voice use.
-
-5. **Scan the pairing QR** in Settings → Pair. The QR contains:
+4. **Scan the plugin v1 QR** in Settings → Pair Plugin. The QR is raw JSON (UTF-8, not a URL):
 
    ```json
-   {"v":1,"peer":"<52-char base32>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>"}
+   {"v":1,"peer":"<52 char lowercase base32>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>"}
    ```
 
-   - No host, no IP in QR — ntfy URL is configured separately
-   - Code expires in ~5 minutes by default
+   - `peer`: 52-char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(device pub)
+     Example shape: `5coyrsvqsuzekhvfx3vlp7g4gr3aqphxrhqp6dllcwbi7xlfok4q`
+   - `pub`: X25519 ephemeral provision public key (64 hex chars, stored encrypted)
+   - `code`: 8-char Crockford code (A-HJ-NP-Z2-9, no I L O 0 1)
+   - `exp`: ISO-8601 expiration (~15 min)
+   - No `addrs`, no `psk`. Phone does NOT mint.
 
-6. **Talk** — Long-press home to open chat and speak.
+5. **Phone browses `_glass-pair._tcp.`** on LAN to find the plugin.
+   - Instance name = `peer` string from QR exactly (52-char lowercase base32)
+   - Takes host:port from NSD advertisement only (no baked values)
+   - Skips loopback (127.x), docker bridge (172.17.x)
+   - If not found in ~10s: **fail-closed** — "Plugin not on this LAN"
+   - If found: "Found plugin on LAN — waiting for pair accept"
 
-## Architecture
+6. **Talk** when pair accept is ready. Messages go to Ashleigh.
+
+### Pairing protocol notes (v1)
+
+- Phone scans only. Phone does NOT call GET /v0/pair.
+- After scan, phone browses mDNS/NSD for `_glass-pair._tcp.` on LAN.
+- Plugin advertises with instance name = peer (64 hex).
+- LAN host stored in memory only (not git).
+- Off-LAN connections fail closed — no relay, no fallback host.
+- **Typed 8-char code pairing** (`/glass/pair/<code>` gossipsub) is **stubbed** — scan the QR or paste JSON.
+- Routed agent is plugin config (default Ashleigh). Phone does not pick the agent.
+
+### Service type
+
+The phone browses for mDNS service type:
 
 ```
-Phone                            ntfy                          glass-peer
-  │                               │                               │
-  │── scan QR ──────────────────►│                               │
-  │                               │                               │
-  │── POST offer ───────────────►│◄── subscribe ─────────────────│
-  │                               │                               │
-  │◄── answer ───────────────────│◄── POST answer ───────────────│
-  │                               │                               │
-  │◄─── ICE candidates ──────────│◄─── ICE candidates ───────────│
-  │                               │                               │
-  │◄══════════ WebRTC DataChannel (encrypted, P2P) ══════════════►│
-  │                               │                               │
-  │── {op:hello, peer} ──────────────────────────────────────────►│
-  │                               │                               │
-  │◄══════════════ chat messages (never via ntfy) ═══════════════►│
+_glass-pair._tcp.
 ```
 
-### Signaling (ntfy)
+The plugin advertises the same service type with:
+- Instance name = `peer` string (52-char lowercase RFC 4648 base32, a-z2-7)
+- host:port from NSD advertisement (phone does not bake any host or port)
 
-- Topic is SHA-256 hash of `peer + pub + code` — unguessable
-- Messages: `{"v":1,"t":"offer|answer|ice","sdp":"..."}`
-- After DataChannel opens, ntfy is done
+---
 
-### Chat (WebRTC)
+## Assistant role
 
-- DataChannel labeled "glass-pair"
-- Protocol: JSON messages
-  - `{op:"hello", peer:"<phone_peer_id>"}` — establish stable topic
-  - `{v:1, op:"send", from:"jamie", text:"...", at:"<ISO>"}` — send message
-  - `{v:1, op:"replies", after:"<ISO>", limit:50}` — fetch replies
-  - `{v:1, op:"agents"}` — list available agents
-- STUN only, no TURN — fail closed if NAT prevents direct connection
+The app registers as a `VoiceInteractionService` and handles `ACTION_ASSIST`. On first run / Settings, it requests `RoleManager.ROLE_ASSISTANT` and falls back to system voice-input / default-assistant settings.
 
-## Voice
+Long-press home (or any assist gesture) opens the Ashleigh chat and **immediately starts listening** for voice input.
 
-### Input
+## Voice input & output
 
-- **Mic button**: Hold to talk, release to send
-- **On assist open**: Automatically starts listening
-- **xAI STT** (when logged in): Speech → api.x.ai/v1/stt
-- **Fallback**: Android on-device SpeechRecognizer
+### Microphone permission
 
-### Output
+The app requests `RECORD_AUDIO` permission when you first try to use voice. A brief rationale explains that Jamie's voice goes to Ashleigh.
 
-- **xAI TTS** (when logged in): Reply → api.x.ai/v1/tts
-- **Fallback**: Android TextToSpeech
+### Hold-to-talk
 
-### xAI Login
+- **Mic button** in the composer: hold to talk, release to send
+- **On assist open** (long-press home): automatically starts listening
+- Default: Android `SpeechRecognizer` (on-device STT, no paid cloud)
+- Final transcript posts just like typed messages
 
-xAI credentials are for STT/TTS only, not the message bus. Login is optional — the app works with on-device speech without xAI.
+### Spoken replies
 
-## Build
+When Ashleigh replies:
 
-```bash
-cd android
+1. Try xAI TTS if logged in (bearer on device only)
+2. Fall back to Android `TextToSpeech`
 
-# Create local.properties with your SDK path
-echo "sdk.dir=/path/to/Android/Sdk" > local.properties
+TTS stops if you start a new voice input.
 
-# Build debug APK
-./gradlew assembleDebug
+### Keyboard fallback
 
-# Install to connected device
-adb install app/build/outputs/apk/debug/app-debug.apk
-```
+The typed composer remains available.
 
-### Requirements
+---
 
-- Android Studio Hedgehog (2023.1.1) or later
-- JDK 17+
-- Android SDK 35 (compileSdk)
-- minSdk 29 (Android 10)
+## Legacy: P2P Stream (glass-pair/v0)
 
-## Pairing States
+v0 pairing is legacy and kept only for backward compatibility. v1 is the current path.
 
-| State | Description |
-|-------|-------------|
-| Not paired | No invite, show "Scan QR" prompt |
-| Invite pending | Have invite, waiting for WebRTC connection |
-| Paired | Have stable topic, can reconnect without new QR |
+### v0 Pairing handshake (legacy)
 
-### Remint
+1. Phone scans QR → parses `{v,peer,addrs,proto,code,psk,exp}`.
+2. Phone dials inbox multiaddrs (TCP + Noise + Mplex).
+3. Opens stream `/glass/inbox/v0`.
+4. First frame: `{"psk":"<64 hex from QR>"}` (unsigned-varint length-prefixed JSON).
+5. Inbox verifies PSK and replies: `{status:200,body:{paired:true}}`.
 
-Scanning a new QR replaces the existing pair. The peer clears `phone_peer` and starts fresh on the new invite topic.
+### Frame format
 
-## Configuration
+All frames are **unsigned-varint** (multiformats) length prefix followed by UTF-8 JSON bytes.
 
-### In-App Settings
+---
 
-- **ntfy URL**: Public signaling server URL
-- **xAI Login**: Optional, for cloud STT/TTS
-- **Agent Selection**: Choose from available agents (after pairing)
+## Legacy: HTTP Inbox (parked)
 
-### Build Configuration
+HTTP inbox is parked. v1 pairing uses LAN discovery instead.
 
-Copy `local.properties.example` to `local.properties` and set:
+Token in Settings is optional (only if bearer needed later). URL field is hidden/advanced.
 
-```properties
-sdk.dir=/path/to/Android/Sdk
-```
+Do **not** invent URLs, tokens, or relay addrs. Do not put secrets in git or the APK.
+
+## How to run
+
+1. Open the `android/` directory in Android Studio (not the repo root).
+2. Generate the Gradle wrapper if missing:
+
+   ```
+   gradle wrapper --gradle-version 8.11.1
+   ```
+
+   or let Android Studio create `gradle/wrapper/gradle-wrapper.jar`.
+3. Set `sdk.dir` in `local.properties`. URL/token are optional (HTTP inbox parked).
+4. Sideload the debug APK (or the GitHub Release `apk-debug-0.1.0`).
+5. Grant Glass as the default assistant.
+6. Long-press home to open Ashleigh.
 
 ## Layout
 
 ```
-android/
-  app/                      applicationId com.jtwolfe.glass
-    src/main/
-      java/.../glass/
-        assist/             VoiceInteractionService
-        auth/               xAI OAuth
-        chat/               Chat UI and ViewModel
-        inbox/              Message types
-        pairing/            QR scanning and state
-        rtc/                WebRTC and ntfy signaling
-        settings/           Agent settings
-        ui/                 Compose UI
-        voice/              STT/TTS helpers
+android/          this project
+  app/            applicationId com.jtwolfe.glass
 ```
 
-## Legacy (Not Used)
-
-The following are legacy paths and not part of the current architecture:
-
-- **HTTP inbox**: Parked
-- **P2P libp2p stream**: Removed
-- **LAN/mDNS discovery**: Removed
-- **Circuit relay**: Removed
-
-Current path: ntfy signaling → WebRTC DataChannel → encrypted P2P chat.
+minSdk 29, compile/target 35.

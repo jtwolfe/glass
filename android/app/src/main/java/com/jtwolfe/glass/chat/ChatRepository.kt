@@ -47,8 +47,7 @@ class ChatRepository(
             val result = webRtc.replies(after = after, limit = 50, token = token)
             if (result is DataChannelRepliesResult.Success) {
                 return result.messages
-                    // Filter out outgoing messages (from=jamie), keep agent replies
-                    .filter { !it.from.equals("jamie", ignoreCase = true) }
+                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
                     .map { msg ->
                         V0Message(
                             id = msg.id.takeIf { it.isNotBlank() },
@@ -67,8 +66,7 @@ class ChatRepository(
             val result = plugin.replies(after = after, limit = 50, token = token)
             if (result is RepliesResult.Success) {
                 return result.messages
-                    // Filter out outgoing messages (from=jamie), keep agent replies
-                    .filter { !it.from.equals("jamie", ignoreCase = true) }
+                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
                     .map { msg ->
                         V0Message(
                             id = msg.id.takeIf { it.isNotBlank() },

@@ -37,26 +37,27 @@ class AgentSettings(private val context: Context) {
     private val selectedAgentNameKey = stringPreferencesKey("selected_agent_name")
     private val cachedAgentsKey = stringPreferencesKey("cached_agents_json")
 
-    private val _availableAgents = MutableStateFlow<List<Agent>>(listOf(DEFAULT_AGENT))
+    private val _availableAgents = MutableStateFlow<List<Agent>>(emptyList())
     val availableAgents = _availableAgents.asStateFlow()
 
     val selectedAgent: Flow<Agent> = context.agentStore.data.map { prefs ->
         val id = prefs[selectedAgentIdKey]
         val name = prefs[selectedAgentNameKey]
-        if (id != null && name != null) {
+        if (!id.isNullOrBlank() && !name.isNullOrBlank()) {
             Agent(id, name)
         } else {
-            DEFAULT_AGENT
+            PLACEHOLDER_AGENT
         }
     }
 
-    suspend fun getSelectedAgentId(): String {
+    suspend fun getSelectedAgentId(): String? {
         return context.agentStore.data.map { prefs ->
-            prefs[selectedAgentIdKey] ?: DEFAULT_AGENT.id
+            prefs[selectedAgentIdKey]?.takeIf { it.isNotBlank() }
         }.first()
     }
 
     suspend fun setSelectedAgent(agent: Agent) {
+        if (agent.id.isBlank()) return
         context.agentStore.edit { prefs ->
             prefs[selectedAgentIdKey] = agent.id
             prefs[selectedAgentNameKey] = agent.name
@@ -64,19 +65,22 @@ class AgentSettings(private val context: Context) {
     }
 
     suspend fun updateAvailableAgents(agents: List<Agent>) {
-        val withDefault = if (agents.none { it.id == DEFAULT_AGENT.id }) {
-            listOf(DEFAULT_AGENT) + agents
-        } else {
-            agents
-        }
-        _availableAgents.value = withDefault
+        if (agents.isEmpty()) return
+
+        _availableAgents.value = agents
 
         val json = JSONArray().apply {
-            withDefault.forEach { put(it.toJson()) }
+            agents.forEach { put(it.toJson()) }
         }.toString()
 
         context.agentStore.edit { prefs ->
             prefs[cachedAgentsKey] = json
+        }
+
+        val currentId = getSelectedAgentId()
+        val stillExists = currentId != null && agents.any { it.id == currentId }
+        if (!stillExists) {
+            setSelectedAgent(agents.first())
         }
     }
 
@@ -107,10 +111,7 @@ class AgentSettings(private val context: Context) {
     }
 
     companion object {
-        // Generic default until agent list arrives from peer
-        val DEFAULT_AGENT = Agent(
-            id = "default",
-            name = "Assistant",
-        )
+        const val PLACEHOLDER_NAME = "Glass"
+        val PLACEHOLDER_AGENT = Agent(id = "", name = PLACEHOLDER_NAME)
     }
 }

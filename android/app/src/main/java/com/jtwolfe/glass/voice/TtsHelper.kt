@@ -75,7 +75,7 @@ class TtsHelper(
 
     fun speak(text: String) {
         if (_state.value != TtsState.READY && _state.value != TtsState.SPEAKING) return
-        val utteranceId = "glass_tts_${utteranceCounter.incrementAndGet()}"
+        val utteranceId = "ashleigh_${utteranceCounter.incrementAndGet()}"
         tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
     }
 

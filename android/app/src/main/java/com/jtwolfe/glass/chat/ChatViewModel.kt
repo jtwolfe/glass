@@ -44,9 +44,8 @@ data class ChatUiState(
     val sttError: SttError? = null,
     val isListening: Boolean = false,
     val partialTranscript: String = "",
-    // Generic defaults until agent list arrives from peer
-    val selectedAgentName: String = "Assistant",
-    val selectedAgentId: String = "default",
+    val selectedAgentName: String = "Glass",
+    val selectedAgentId: String = "",
 )
 
 data class SttError(
@@ -78,8 +77,8 @@ class ChatViewModel(
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
-    private val _newPeerMessages = Channel<V0Message>(Channel.BUFFERED)
-    val newPeerMessages = _newPeerMessages.receiveAsFlow()
+    private val _newAssistantMessages = Channel<V0Message>(Channel.BUFFERED)
+    val newAssistantMessages = _newAssistantMessages.receiveAsFlow()
 
     private var pollJob: Job? = null
     private var afterCursor: String = EPOCH
@@ -105,7 +104,7 @@ class ChatViewModel(
             _state.update { it.copy(messages = local) }
             afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
             lastSpokenAt = local
-                .filter { it.from.equals(V0Message.FROM_ASHLEIGH, ignoreCase = true) }
+                .filter { it.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) }
                 .maxOfOrNull { it.at } ?: EPOCH
         }
 
@@ -389,15 +388,14 @@ class ChatViewModel(
                 if (remote.isNotEmpty()) {
                     afterCursor = remote.maxOf { it.at }
                 }
-                // Filter for new incoming messages (not from jamie)
-                val newPeer = remote.filter { msg ->
-                    !msg.from.equals(V0Message.FROM_JAMIE, ignoreCase = true) &&
+                val newAssistantMsgs = remote.filter { msg ->
+                    msg.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) &&
                         msg.at > lastSpokenAt
                 }
-                if (newPeer.isNotEmpty()) {
-                    lastSpokenAt = newPeer.maxOf { it.at }
-                    newPeer.sortedBy { it.at }.forEach { msg ->
-                        _newPeerMessages.trySend(msg)
+                if (newAssistantMsgs.isNotEmpty()) {
+                    lastSpokenAt = newAssistantMsgs.maxOf { it.at }
+                    newAssistantMsgs.sortedBy { it.at }.forEach { msg ->
+                        _newAssistantMessages.trySend(msg)
                     }
                 }
                 _state.update { ui ->

@@ -47,210 +47,145 @@ See [SECURITY.md](SECURITY.md) for full threat model.
 
 ## Quick Start
 
-### Docker Compose (Single Machine)
+No secrets in this repo. Inbox auth is configured outside git.
 
-```bash
-# Clone and configure
-cp .env.example .env
-# Edit .env with strong password and your public URL
+---
 
-# Build and start
-docker compose up -d
+## xAI / Grok Login
 
-# Generate pairing QR
-curl -u "$GLASS_PAIR_USERNAME:$GLASS_PAIR_PASSWORD" \
-     http://localhost:8080/pair
+The Android app supports xAI OAuth login for direct Grok STT/TTS from the phone.
 
-# Get QR image
-curl -u "$GLASS_PAIR_USERNAME:$GLASS_PAIR_PASSWORD" \
-     http://localhost:8080/qr -o qr.svg
-```
+### How to log in
 
-### Kubernetes (Helm)
+1. Open the app → Settings → **xAI / Grok Login**
+2. Tap **Login with xAI**
+3. A browser opens to `auth.x.ai` — sign in with your xAI account
+4. Enter the device code if prompted
+5. Return to the app — you'll see "Logged in" with your email
 
-```bash
-# Create auth secret
-kubectl create secret generic glass-auth \
-  --from-literal=pair-username=admin \
-  --from-literal=pair-password=$(openssl rand -base64 32)
+### Where the token lives
 
-# Install chart
-helm install glass helm/glass \
-  --set ingress.host=glass.example.com \
-  --set ingress.tls.secretName=glass-tls
-```
+- **EncryptedSharedPreferences** on the device (`glass_xai_auth`)
+- Protected by Android Keystore (AES-256-GCM)
+- Access token, refresh token, expiry, email
+- Never committed to git, never logged, never sent to the inbox
 
-See [helm/glass/values.yaml](helm/glass/values.yaml) for all options.
+### What it does
 
-## Configuration
+When logged in:
+- **STT**: Voice is sent directly to `api.x.ai/v1/stt` (model: `grok-stt`)
+- **TTS**: Replies are synthesized via `api.x.ai/v1/tts` (voice: `eve`)
+- The xAI bearer **never leaves the phone** — not sent to the inbox public URL
 
-### Environment Variables
+When logged out or offline:
+- **STT**: Falls back to Android's on-device `SpeechRecognizer`
+- **TTS**: Falls back to Android's on-device `TextToSpeech`
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GLASS_PAIR_USERNAME` | Yes | — | HTTP Basic auth username for /pair, /qr |
-| `GLASS_PAIR_PASSWORD` | Yes | — | HTTP Basic auth password (use strong random) |
-| `GLASS_NTFY_INTERNAL_URL` | No | `http://ntfy:80` | ntfy URL for peer (internal network) |
-| `GLASS_NTFY_PUBLIC_URL` | No | `https://glass.example.com/ntfy` | ntfy URL for phone (public) |
-| `GLASS_STUN_SERVER` | No | `stun:stun.l.google.com:19302` | STUN server for NAT traversal |
-| `GLASS_INVITE_TTL` | No | `300` | Invite expiry in seconds |
-| `GLASS_DATA_DIR` | No | `/data` | Persistent state directory |
-| `GLASS_PORT` | No | `8080` | HTTP server port |
+### Logout
 
-### Reverse Proxy Setup
+Settings → xAI / Grok Login → **Logout** wipes the encrypted store.
 
-ntfy cannot have a path in its `BASE_URL`. If you use a path prefix like `/ntfy`, configure your reverse proxy to strip it:
+---
 
-**nginx:**
-```nginx
-location /ntfy/ {
-    rewrite ^/ntfy/(.*)$ /$1 break;
-    proxy_pass http://ntfy:80;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
+## Inbox Pairing (glass-pair/v0)
 
-**Traefik (Kubernetes Ingress):**
-```yaml
-annotations:
-  nginx.ingress.kubernetes.io/rewrite-target: /$2
-```
+The phone pairs with the inbox via QR code or short code. Product path is P2P over libp2p.
 
-## API Reference
+### QR format (from inbox)
 
-### `POST /pair`
-
-Generate new pairing invite. **Requires authentication.**
-
-Reminting clears any existing pair.
-
-```bash
-curl -u admin:password http://localhost:8080/pair
-```
-
-Response:
 ```json
 {
-  "invite": {
-    "v": 1,
-    "peer": "abcd...",
-    "pub": "1234...",
-    "code": "XYZW5678",
-    "exp": "2024-01-01T00:05:00Z"
-  },
-  "topic": "a1b2c3d4...",
-  "expires": "2024-01-01T00:05:00Z"
+  "v": 0,
+  "peer": "<inbox libp2p peer id>",
+  "addrs": ["/ip4/10.0.0.1/tcp/4001", "/p2p/<relay>/p2p-circuit"],
+  "proto": "/glass/inbox/v0",
+  "code": "K7M2Q9WH",
+  "psk": "<64 hex chars, 32-byte swarm key>",
+  "exp": "2026-08-16T08:00:00Z"
 }
 ```
 
-### `GET /qr`
+- `peer`: Inbox libp2p peer ID
+- `addrs`: Inbox multiaddrs (may include circuit-relay)
+- `proto`: Stream protocol after pair (`/glass/inbox/v0`)
+- `code`: 8 char Crockford (A-Z2-7), also printed for manual entry
+- `psk`: Private swarm key (QR only, 64 hex = 32 bytes) — stored encrypted, never git
+- `exp`: ISO-8601, 15 minutes from mint
 
-Get QR code image for current invite. **Requires authentication.**
+### How to pair
 
-```bash
-curl -u admin:password http://localhost:8080/qr -o qr.svg
+1. Open the app → Settings → **Pair Inbox**
+2. **Scan the QR** from your inbox setup screen, or
+3. **Enter the short code** (requires relay configured)
+4. After successful scan, you'll see "Paired (HTTPS fallback until swarm is live)"
+
+### Pairing state
+
+- Stored in **EncryptedSharedPreferences** (`glass_pairing`)
+- PSK never committed to git, never logged
+- Persists across app restarts
+
+### P2P vs HTTPS
+
+- **Product path**: P2P over libp2p protocol `/glass/inbox/v0` with Noise + PSK
+- **Current transport**: HTTPS fallback until Quay locks the swarm
+- **Advanced settings**: Manual HTTPS URL/token configuration (hidden by default)
+
+### After pair
+
+Communication uses protocol `/glass/inbox/v0`:
+- `POST /v0/messages {from, text, at}` → 201
+- `GET /v0/replies?after=&limit=50` → `{messages}`
+- `GET /v0/health`
+
+Authorization: `Bearer $GLASS_PHONE_TOKEN` (inbox phone token, not the xAI bearer).
+
+---
+
+## On-device fallback
+
+Voice always works, even without login or pairing:
+
+| Feature | With xAI login | Without login |
+|---------|---------------|---------------|
+| STT | `api.x.ai/v1/stt` | Android `SpeechRecognizer` |
+| TTS | `api.x.ai/v1/tts` | Android `TextToSpeech` |
+
+Fallback triggers on:
+- Not logged in
+- Offline / network error
+- xAI API returns error
+- Inbox `/v0/stt` returns 503
+
+---
+
+## OAuth client ID
+
+The app uses the public xAI OIDC client (same as Grok CLI / OpenClaw):
+
+```
+Client ID: b1a00492-073a-47ea-816f-4c329264a828
+Scope: openid profile email offline_access grok-cli:access api:access
 ```
 
-Returns SVG image.
+### Potential blocker
 
-### `GET /health`
+If xAI requires a registered Android redirect URI for production:
+- Currently uses device-code flow (no redirect needed)
+- Chrome Custom Tabs open `verification_uri_complete`
+- User authorizes in browser, app polls for token
 
-Health check. **No authentication.**
+If xAI blocks this client ID for Android apps, we'll need to register a custom redirect URI scheme (`com.jtwolfe.glass://oauth/callback`).
 
-```bash
-curl http://localhost:8080/health
+---
+
+## libp2p (future)
+
+P2P transport is stubbed but not yet active:
+
+```kotlin
+// TODO(quay): Add io.libp2p:jvm-libp2p when glass-pair swarm is live.
+// Currently HTTPS inbox remains the transport; P2P is the product path.
 ```
 
-Response:
-```json
-{
-  "status": "ok",
-  "paired": true,
-  "connected": true
-}
-```
-
-## Android App
-
-Build and install the Android app:
-
-```bash
-cd android
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
-```
-
-Configure as default assistant:
-1. Settings → Apps → Default apps → Digital assistant
-2. Select "Glass"
-
-### App Configuration
-
-The phone needs the public ntfy URL configured. This is set in app settings after first launch.
-
-## Development
-
-### Running Locally
-
-```bash
-# Install dependencies
-cd glass-peer
-pip install -r requirements.txt
-
-# Set environment
-export GLASS_PAIR_USERNAME=dev
-export GLASS_PAIR_PASSWORD=dev
-export GLASS_NTFY_INTERNAL_URL=http://localhost:8080
-export GLASS_DATA_DIR=./data
-
-# Run (requires ntfy running separately)
-python main.py
-```
-
-### Running Tests
-
-```bash
-cd glass-peer
-pip install pytest pytest-asyncio ruff
-ruff check .
-pytest tests/ -v
-```
-
-### Helm Chart Development
-
-```bash
-# Lint
-helm lint helm/glass
-
-# Template
-helm template test helm/glass \
-  --set auth.existingSecret=test \
-  --set ingress.host=test.example.com
-```
-
-## Troubleshooting
-
-### Connection Fails Immediately
-
-- **Symmetric NAT**: Both endpoints behind symmetric NAT cannot connect with STUN only. Use a VPN or ensure one endpoint has a public IP.
-
-### Pairing Works but Reconnect Fails
-
-- **Invite expired**: Remint with `/pair`. The stable topic is only valid after successful hello.
-- **State lost**: Check that `/data` is persisted across restarts.
-
-### ntfy Errors
-
-- **404 on topic**: ntfy is working. Topics don't exist until first publish.
-- **Connection refused**: Check ntfy container is healthy and network allows access.
-
-### WebRTC Errors
-
-- **ICE failed**: NAT traversal failed. Check STUN server is reachable from both endpoints.
-- **DTLS failed**: Clock skew between endpoints can cause this. Sync NTP.
-
-## License
-
-Private repository. See LICENSE file.
+The pairing UI captures and stores the peer ID, multiaddrs, and PSK. Once Quay locks the transport, the app will connect via libp2p Noise with the PSK as a pre-shared key.
