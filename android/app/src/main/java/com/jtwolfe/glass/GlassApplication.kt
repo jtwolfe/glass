@@ -75,11 +75,7 @@ class GlassApplication : Application() {
         val connection = WebRtcPeerConnection(this, signaling) {
             Log.d(TAG, "WebRTC first-pair disconnected")
             webRtcHandshakeInFlight.set(false)
-            // Don't immediately flip state - let reconnect logic handle it
-            // Only update if no reconnect is in flight and WSS is not connected
-            if (!reconnectInFlight.get()) {
-                updateConnectionState()
-            }
+            // WebRTC is optional LAN. Don't change connection state - WSS drives that.
             onWebRtcDisconnected?.invoke()
         }
         webRtcConnection = connection
@@ -102,11 +98,7 @@ class GlassApplication : Application() {
         val connection = WebRtcPeerConnection(this, signaling) {
             Log.d(TAG, "WebRTC reconnect disconnected")
             webRtcHandshakeInFlight.set(false)
-            // Don't immediately flip state - let reconnect logic handle it
-            // Only update if no reconnect is in flight and WSS is not connected
-            if (!reconnectInFlight.get()) {
-                updateConnectionState()
-            }
+            // WebRTC is optional LAN. Don't change connection state - WSS drives that.
             onWebRtcDisconnected?.invoke()
         }
         webRtcConnection = connection
@@ -162,24 +154,30 @@ class GlassApplication : Application() {
     }
 
     /**
-     * Update connection state based on WSS OR DataChannel status.
-     * CONNECTED if WSS is open OR DataChannel is open.
+     * Update connection state based on WSS status.
+     * CONNECTED means WSS is open. WebRTC is optional LAN leftover, not required for "online".
      */
     fun updateConnectionState() {
         val wssOpen = wssClient?.isConnected == true
-        val dcOpen = webRtcConnection?.isConnected == true
         _connectionState.value = when {
-            wssOpen || dcOpen -> ConnectionState.CONNECTED
+            wssOpen -> ConnectionState.CONNECTED
             pairingStore.isPaired -> ConnectionState.OFFLINE_PAIRED
             else -> ConnectionState.UNPAIRED
         }
     }
 
     /**
-     * Check if any talk path is connected (WSS or DataChannel).
+     * Check if WSS session is connected.
+     * This is THE session path. WebRTC is optional LAN, not part of "connected" status.
      */
-    val isAnyPathConnected: Boolean
-        get() = wssClient?.isConnected == true || webRtcConnection?.isConnected == true
+    val isWssConnected: Boolean
+        get() = wssClient?.isConnected == true
+
+    /**
+     * Check if WebRTC DataChannel is connected (LAN path, optional).
+     */
+    val isWebRtcConnected: Boolean
+        get() = webRtcConnection?.isConnected == true
 
     fun closeWebRtcConnection() {
         webRtcConnection?.close()

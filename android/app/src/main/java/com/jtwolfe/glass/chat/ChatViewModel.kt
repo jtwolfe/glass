@@ -89,14 +89,26 @@ class ChatViewModel(
     private val connectionState: ConnectionState
         get() = connectionStateProvider?.invoke() ?: ConnectionState.UNPAIRED
 
-    private val isWebRtcConnected: Boolean
+    /**
+     * WSS is THE session. CONNECTED means WSS is open.
+     */
+    private val isWssConnected: Boolean
         get() = connectionState == ConnectionState.CONNECTED
+
+    /**
+     * WebRTC is optional LAN leftover. Can still send via it if available.
+     */
+    private val hasAnyTalkPath: Boolean
+        get() {
+            val app = getApplication<GlassApplication>()
+            return app.isWssConnected || app.isWebRtcConnected
+        }
 
     private val isPluginConnected: Boolean
         get() = pluginClient?.isConnected == true && pluginClient.isPaired
 
     private val canSendRemote: Boolean
-        get() = isWebRtcConnected || isPluginConnected || _state.value.inbox.isHttpConfigured
+        get() = hasAnyTalkPath || isPluginConnected || _state.value.inbox.isHttpConfigured
 
     init {
         viewModelScope.launch {
@@ -170,7 +182,8 @@ class ChatViewModel(
         _state.update { ui ->
             ui.copy(
                 status = when {
-                    isWebRtcConnected -> "Plugin connected (WebRTC DataChannel)"
+                    isWssConnected -> ConnectionState.CONNECTED.displayText
+                    hasAnyTalkPath -> "LAN connected"
                     config.isHttpConfigured -> "Inbox HTTP (${config.source})"
                     else -> "Local-only — scan QR to connect via ntfy"
                 },
