@@ -364,9 +364,7 @@ private fun PairingSection(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Plugin Connection", style = MaterialTheme.typography.titleMedium)
 
-        val hasPairing = pairing != null && pairing.isValid
-
-        if (hasPairing) {
+        if (connectionState != ConnectionState.UNPAIRED) {
             val statusColor = when (connectionState) {
                 ConnectionState.CONNECTED -> MaterialTheme.colorScheme.primaryContainer
                 ConnectionState.RECONNECTING -> MaterialTheme.colorScheme.tertiaryContainer
@@ -386,13 +384,7 @@ private fun PairingSection(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         connectionState.displayText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = onStatusColor,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Code: ${pairing?.shortCode ?: ""}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = onStatusColor,
                     )
                 }
