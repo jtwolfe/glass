@@ -6,12 +6,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.jtwolfe.glass.GlassApplication
+import com.jtwolfe.glass.auth.TokenResult
 import com.jtwolfe.glass.auth.XaiAuthStore
 import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
 import com.jtwolfe.glass.pairing.PluginClient
 import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.voice.SttResult
+import com.jtwolfe.glass.voice.TtsResult
 import com.jtwolfe.glass.voice.XaiVoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,6 +39,12 @@ data class ChatUiState(
     val isListening: Boolean = false,
     val partialTranscript: String = "",
 )
+
+sealed class TranscribeResult {
+    data class Success(val text: String) : TranscribeResult()
+    data class Error(val message: String) : TranscribeResult()
+    data object NotLoggedIn : TranscribeResult()
+}
 
 class ChatViewModel(
     application: Application,
@@ -232,15 +241,21 @@ class ChatViewModel(
      */
     suspend fun synthesizeXaiTts(text: String): ByteArray? {
         if (text.isBlank()) return null
-        val bearer = xaiAuthStore.getFreshAccessToken() ?: return null
+        val bearer = when (val tokenResult = xaiAuthStore.getOrRefreshAccessToken()) {
+            is TokenResult.Valid -> tokenResult.accessToken
+            else -> return null
+        }
         return withContext(Dispatchers.IO) {
-            runCatching { xaiVoiceClient.synthesize(bearer, text) }.getOrNull()
+            when (val result = xaiVoiceClient.synthesize(bearer, text)) {
+                is TtsResult.Success -> result.audio
+                is TtsResult.Error -> null
+            }
         }
     }
 
     /**
-     * Transcribe audio. Prefers xAI STT when logged in, falls back to inbox STT.
-     * Returns null if both fail (caller should use on-device recognition).
+     * Transcribe audio using xAI STT when logged in.
+     * Returns TranscribeResult with either success text or specific error.
      *
      * @param audio Raw audio bytes (WAV format expected from XaiAudioRecorder)
      * @param filename Suggested filename for the audio file
@@ -250,29 +265,30 @@ class ChatViewModel(
         audio: ByteArray,
         filename: String = "speech.wav",
         contentType: String = "audio/wav",
-    ): String? {
-        if (audio.isEmpty()) return null
+    ): TranscribeResult {
+        if (audio.isEmpty()) {
+            return TranscribeResult.Error("No audio captured")
+        }
 
-        // Prefer xAI STT when logged in (bearer never leaves the phone)
-        val xaiBearer = xaiAuthStore.getFreshAccessToken()
-        if (xaiBearer != null) {
-            val xaiResult = withContext(Dispatchers.IO) {
-                runCatching {
-                    xaiVoiceClient.transcribe(xaiBearer, audio, filename, contentType)
-                }.getOrNull()
+        val tokenResult = xaiAuthStore.getOrRefreshAccessToken()
+        val bearer = when (tokenResult) {
+            is TokenResult.Valid -> tokenResult.accessToken
+            is TokenResult.RefreshFailed -> {
+                return TranscribeResult.Error(tokenResult.message)
             }
-            if (!xaiResult.isNullOrBlank()) {
-                return xaiResult
+            is TokenResult.NoSession -> {
+                return TranscribeResult.NotLoggedIn
             }
         }
 
-        // Fall back to inbox STT (503 returns null → use on-device)
-        val config = _state.value.inbox
-        if (config.isHttpConfigured) {
-            return runCatching { repository.transcribe(config, audio) }.getOrNull()
+        val sttResult = withContext(Dispatchers.IO) {
+            xaiVoiceClient.transcribe(bearer, audio, filename, contentType)
         }
 
-        return null
+        return when (sttResult) {
+            is SttResult.Success -> TranscribeResult.Success(sttResult.text)
+            is SttResult.Error -> TranscribeResult.Error(sttResult.displayMessage)
+        }
     }
 
     val hasXaiAuth: Boolean get() = xaiAuthStore.isLoggedIn

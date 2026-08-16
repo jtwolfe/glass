@@ -190,7 +190,7 @@ class XaiAudioRecorder(private val context: Context) {
         const val CHANNELS = 1
         const val BITS_PER_SAMPLE = 16
 
-        const val MIN_AUDIO_BYTES = SAMPLE_RATE * CHANNELS * (BITS_PER_SAMPLE / 8) / 4
+        const val MIN_AUDIO_BYTES = 1600
     }
 }
 

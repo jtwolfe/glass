@@ -26,6 +26,7 @@ import com.jtwolfe.glass.auth.DeviceCodeResponse
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
+import com.jtwolfe.glass.chat.TranscribeResult
 import com.jtwolfe.glass.p2p.PairResult
 import com.jtwolfe.glass.pairing.DiscoveryState
 import com.jtwolfe.glass.pairing.LanDiscovery
@@ -543,13 +544,12 @@ class MainActivity : ComponentActivity() {
         ttsHelper?.stop()
 
         val app = application as GlassApplication
-        val hasUsableBearer = app.xaiAuthStore.getFreshAccessToken() != null
-        if (hasUsableBearer) {
+        if (app.xaiAuthStore.isLoggedIn) {
             val started = xaiRecorder?.startRecording() == true
             if (started) {
                 chatViewModel.onListeningStateChange(true, "")
             } else {
-                speechHelper?.startListening()
+                Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
             }
         } else {
             speechHelper?.startListening()
@@ -562,22 +562,26 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val audio = xaiRecorder?.stopRecording()
                 if (audio == null || audio.isEmpty()) {
-                    Toast.makeText(this@MainActivity, "No audio — trying mic again", Toast.LENGTH_SHORT).show()
-                    speechHelper?.startListening()
+                    Toast.makeText(this@MainActivity, "No audio captured", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
                 chatViewModel.onListeningStateChange(true, "Transcribing...")
-                val transcript = withContext(Dispatchers.IO) {
+                val result = withContext(Dispatchers.IO) {
                     chatViewModel.transcribeAudio(audio)
                 }
                 chatViewModel.onListeningStateChange(false, "")
 
-                if (!transcript.isNullOrBlank()) {
-                    chatViewModel.onVoiceTranscript(transcript)
-                } else {
-                    Toast.makeText(this@MainActivity, "Falling back to device STT", Toast.LENGTH_SHORT).show()
-                    speechHelper?.startListening()
+                when (result) {
+                    is TranscribeResult.Success -> {
+                        chatViewModel.onVoiceTranscript(result.text)
+                    }
+                    is TranscribeResult.Error -> {
+                        Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
+                    }
+                    is TranscribeResult.NotLoggedIn -> {
+                        Toast.makeText(this@MainActivity, "Not logged in — use Settings to login", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         } else {

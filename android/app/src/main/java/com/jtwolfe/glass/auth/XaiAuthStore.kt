@@ -2,12 +2,15 @@ package com.jtwolfe.glass.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.time.Instant
@@ -41,6 +44,9 @@ class XaiAuthStore(context: Context) {
     private val _state = MutableStateFlow(loadBundle())
     val state: Flow<XaiAuthBundle?> = _state.asStateFlow()
 
+    private val refreshMutex = Mutex()
+    private val xaiOAuth = XaiOAuth()
+
     val currentBundle: XaiAuthBundle? get() = _state.value
 
     val isLoggedIn: Boolean get() = currentBundle?.accessToken?.isNotBlank() == true
@@ -73,6 +79,74 @@ class XaiAuthStore(context: Context) {
         return bundle.accessToken
     }
 
+    /**
+     * Get a valid access token, refreshing if expired/near-expiry.
+     * Returns null if no token, no refresh_token, or refresh fails.
+     * On refresh failure, returns the specific error message.
+     */
+    suspend fun getOrRefreshAccessToken(): TokenResult = withContext(Dispatchers.IO) {
+        val bundle = _state.value
+            ?: return@withContext TokenResult.NoSession
+
+        if (bundle.accessToken.isBlank()) {
+            return@withContext TokenResult.NoSession
+        }
+
+        if (!bundle.isExpired) {
+            return@withContext TokenResult.Valid(bundle.accessToken)
+        }
+
+        val refreshToken = bundle.refreshToken
+        if (refreshToken.isNullOrBlank()) {
+            return@withContext TokenResult.RefreshFailed("No refresh token — re-login needed")
+        }
+
+        refreshMutex.withLock {
+            val currentBundle = _state.value
+            if (currentBundle != null && !currentBundle.isExpired) {
+                return@withContext TokenResult.Valid(currentBundle.accessToken)
+            }
+
+            Log.d(TAG, "Token expired, attempting refresh")
+            val result = xaiOAuth.refreshAccessToken(refreshToken)
+
+            if (result.ok && result.accessToken != null) {
+                val newBundle = XaiAuthBundle.fromTokenResponse(
+                    accessToken = result.accessToken,
+                    refreshToken = result.refreshToken ?: refreshToken,
+                    expiresIn = result.expiresIn,
+                    idToken = result.idToken ?: bundle.idToken,
+                ).copy(email = bundle.email, subject = bundle.subject)
+
+                saveInternal(newBundle)
+                Log.d(TAG, "Token refreshed successfully")
+                return@withContext TokenResult.Valid(newBundle.accessToken)
+            }
+
+            Log.w(TAG, "Token refresh failed: ${result.error} / ${result.detail}")
+            val errorMsg = when (result.error) {
+                "invalid_grant" -> "Session expired — re-login needed"
+                "network" -> "Network error during refresh"
+                else -> "Refresh failed: ${result.error ?: "unknown"}"
+            }
+            return@withContext TokenResult.RefreshFailed(errorMsg)
+        }
+    }
+
+    private fun saveInternal(bundle: XaiAuthBundle) {
+        prefs.edit()
+            .putString(KEY_ACCESS_TOKEN, bundle.accessToken)
+            .putString(KEY_REFRESH_TOKEN, bundle.refreshToken)
+            .putString(KEY_EXPIRES_AT, bundle.expiresAt)
+            .putString(KEY_EMAIL, bundle.email)
+            .putString(KEY_SUBJECT, bundle.subject)
+            .putString(KEY_ID_TOKEN, bundle.idToken)
+            .putString(KEY_OBTAINED_AT, bundle.obtainedAt)
+            .putString(KEY_UPDATED_AT, Instant.now().toString())
+            .apply()
+        _state.value = bundle
+    }
+
     private fun loadBundle(): XaiAuthBundle? {
         val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
         if (accessToken.isNullOrBlank()) return null
@@ -88,6 +162,7 @@ class XaiAuthStore(context: Context) {
     }
 
     companion object {
+        private const val TAG = "XaiAuthStore"
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_EXPIRES_AT = "expires_at"
@@ -97,6 +172,12 @@ class XaiAuthStore(context: Context) {
         private const val KEY_OBTAINED_AT = "obtained_at"
         private const val KEY_UPDATED_AT = "updated_at"
     }
+}
+
+sealed class TokenResult {
+    data class Valid(val accessToken: String) : TokenResult()
+    data class RefreshFailed(val message: String) : TokenResult()
+    data object NoSession : TokenResult()
 }
 
 data class XaiAuthBundle(
