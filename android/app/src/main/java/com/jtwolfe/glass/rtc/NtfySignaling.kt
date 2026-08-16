@@ -19,9 +19,9 @@ import java.util.concurrent.TimeUnit
 /**
  * ntfy.sh signaling for glass-pair v1 WebRTC pairing.
  *
- * Topic computation:
- *   topic = lowercase hex( SHA-256( UTF-8( "glass-pair/v1\n" + peer + "\n" + pub + "\n" + code ) ) )
- *   64 hex chars, unguessable from 8-char code alone.
+ * Topic types:
+ * - Invite topic (first pair): SHA-256("glass-pair/v1\n{plugin_peer}\n{pub}\n{code}")
+ * - Stable topic (reconnect): SHA-256("glass-pair/v1\n{plugin_peer}\n{phone_peer}")
  *
  * Signaling messages (JSON text):
  *   {"v":1,"t":"offer","sdp":"<sdp>"}
@@ -35,24 +35,32 @@ import java.util.concurrent.TimeUnit
  *
  * Chat NEVER goes through ntfy. Once DataChannel opens, ntfy is done.
  */
-class NtfySignaling(
-    private val peer: String,
-    private val pub: String,
-    private val code: String,
+class NtfySignaling private constructor(
+    val topic: String,
 ) {
     companion object {
         private const val NTFY_HOST = "https://ntfy.sh"
         private const val VERSION_PREFIX = "glass-pair/v1"
 
-        fun computeTopic(peer: String, pub: String, code: String): String {
+        fun fromInvite(peer: String, pub: String, code: String): NtfySignaling {
+            val topic = computeInviteTopic(peer, pub, code)
+            return NtfySignaling(topic)
+        }
+
+        fun fromStableTopic(topic: String): NtfySignaling {
+            return NtfySignaling(topic)
+        }
+
+        fun computeInviteTopic(peer: String, pub: String, code: String): String {
             val input = "$VERSION_PREFIX\n$peer\n$pub\n$code"
             val digest = MessageDigest.getInstance("SHA-256")
             val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
             return hash.joinToString("") { "%02x".format(it) }
         }
-    }
 
-    val topic: String = computeTopic(peer, pub, code)
+        @Deprecated("Use fromInvite or fromStableTopic", ReplaceWith("fromInvite(peer, pub, code)"))
+        fun computeTopic(peer: String, pub: String, code: String): String = computeInviteTopic(peer, pub, code)
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

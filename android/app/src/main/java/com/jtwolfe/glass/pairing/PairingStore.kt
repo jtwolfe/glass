@@ -11,40 +11,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.KeyPairGenerator
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
 /**
  * Encrypted storage for glass-pair pairing data.
  *
- * v1 QR payload from plugin (Jamie's machine):
- * {
- *   "v": 1,
- *   "peer": "<52 char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(device pub)>",
- *   "pub": "<64 hex X25519 ephemeral provision pub>",
- *   "code": "<8 Crockford A-Z2-7>",
- *   "exp": "<ISO-8601, ~15 min>"
- * }
+ * Pairing model:
+ * - First pair (QR scan): invite topic = SHA-256("glass-pair/v1\n{plugin_peer}\n{pub}\n{code}")
+ * - After DC open: send hello, persist phone_peer + plugin_peer + paired=true
+ * - Reconnect: stable topic = SHA-256("glass-pair/v1\n{plugin_peer}\n{phone_peer}")
+ * - isPaired flag is independent of invite exp
  *
- * Example peer shape: 5coyrsvqsuzekhvfx3vlp7g4gr3aqphxrhqp6dllcwbi7xlfok4q
- * mDNS instance name = peer string from QR exactly.
- * No addrs. No provision handshake. No relay. No inbox URL.
- *
- * v0 (legacy) QR payload:
- * {
- *   "v": 0,
- *   "peer": "<inbox libp2p peer id>",
- *   "addrs": ["/ip4/10.0.0.1/tcp/4001", ...],
- *   "proto": "/glass/inbox/v0",
- *   "code": "K7M2Q9WH",
- *   "psk": "<64 hex chars>",
- *   "exp": "2026-08-16T08:00:00Z"
- * }
- *
- * Secrets (pub, psk) are stored ONLY in EncryptedSharedPreferences:
- * - Never committed to git
- * - Never logged
+ * phone_peer: 52-char lowercase base32 of SHA-256(device pub)
+ * - Generated once, persisted
+ * - Regenerated only on unpair/clear
  */
 class PairingStore(context: Context) {
 
@@ -65,9 +49,20 @@ class PairingStore(context: Context) {
 
     val currentInvite: PairingInvite? get() = _state.value
 
-    val isPaired: Boolean get() = currentInvite?.isValid == true
+    val isPaired: Boolean get() = prefs.getBoolean(KEY_PAIRED, false)
 
-    suspend fun save(invite: PairingInvite) = withContext(Dispatchers.IO) {
+    val phonePeer: String get() = getOrCreatePhonePeer()
+
+    val pluginPeer: String? get() = prefs.getString(KEY_PLUGIN_PEER, null)
+
+    val stableTopic: String?
+        get() {
+            val plugin = pluginPeer ?: return null
+            val phone = phonePeer
+            return computeStableTopic(plugin, phone)
+        }
+
+    suspend fun saveInvite(invite: PairingInvite) = withContext(Dispatchers.IO) {
         prefs.edit()
             .putInt(KEY_VERSION, invite.version)
             .putString(KEY_PEER, invite.peer)
@@ -78,14 +73,65 @@ class PairingStore(context: Context) {
             .putString(KEY_CODE, invite.code)
             .putString(KEY_PSK, invite.psk)
             .putString(KEY_EXP, invite.exp)
-            .putString(KEY_PAIRED_AT, Instant.now().toString())
             .apply()
         _state.value = invite
     }
 
+    suspend fun markPaired(pluginPeer: String) = withContext(Dispatchers.IO) {
+        prefs.edit()
+            .putBoolean(KEY_PAIRED, true)
+            .putString(KEY_PLUGIN_PEER, pluginPeer)
+            .putString(KEY_PAIRED_AT, Instant.now().toString())
+            .apply()
+    }
+
     suspend fun clear() = withContext(Dispatchers.IO) {
-        prefs.edit().clear().apply()
+        prefs.edit()
+            .remove(KEY_VERSION)
+            .remove(KEY_PEER)
+            .remove(KEY_PEER_BASE32)
+            .remove(KEY_PUB)
+            .remove(KEY_ADDRS)
+            .remove(KEY_PROTO)
+            .remove(KEY_CODE)
+            .remove(KEY_PSK)
+            .remove(KEY_EXP)
+            .remove(KEY_PAIRED)
+            .remove(KEY_PLUGIN_PEER)
+            .remove(KEY_PAIRED_AT)
+            .remove(KEY_PHONE_PEER)
+            .remove(KEY_PHONE_PUB)
+            .apply()
         _state.value = null
+    }
+
+    private fun getOrCreatePhonePeer(): String {
+        val existing = prefs.getString(KEY_PHONE_PEER, null)
+        if (!existing.isNullOrBlank()) return existing
+
+        val pub = generateDevicePub()
+        val peer = computePhonePeer(pub)
+
+        prefs.edit()
+            .putString(KEY_PHONE_PUB, pub)
+            .putString(KEY_PHONE_PEER, peer)
+            .apply()
+
+        return peer
+    }
+
+    private fun generateDevicePub(): String {
+        val random = SecureRandom()
+        val bytes = ByteArray(32)
+        random.nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun computePhonePeer(pubHex: String): String {
+        val pubBytes = pubHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(pubBytes)
+        return base32Encode(hash).lowercase()
     }
 
     private fun loadInvite(): PairingInvite? {
@@ -107,6 +153,7 @@ class PairingStore(context: Context) {
 
     companion object {
         const val PROTO_V0 = "/glass/inbox/v0"
+        private const val VERSION_PREFIX = "glass-pair/v1"
 
         private const val KEY_VERSION = "version"
         private const val KEY_PEER = "peer"
@@ -117,7 +164,39 @@ class PairingStore(context: Context) {
         private const val KEY_CODE = "code"
         private const val KEY_PSK = "psk"
         private const val KEY_EXP = "exp"
+        private const val KEY_PAIRED = "paired"
         private const val KEY_PAIRED_AT = "paired_at"
+        private const val KEY_PLUGIN_PEER = "plugin_peer"
+        private const val KEY_PHONE_PEER = "phone_peer"
+        private const val KEY_PHONE_PUB = "phone_pub"
+
+        private val BASE32_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567".toCharArray()
+
+        fun base32Encode(data: ByteArray): String {
+            val sb = StringBuilder()
+            var buffer = 0
+            var bitsLeft = 0
+
+            for (byte in data) {
+                buffer = (buffer shl 8) or (byte.toInt() and 0xFF)
+                bitsLeft += 8
+                while (bitsLeft >= 5) {
+                    bitsLeft -= 5
+                    sb.append(BASE32_ALPHABET[(buffer shr bitsLeft) and 0x1F])
+                }
+            }
+            if (bitsLeft > 0) {
+                sb.append(BASE32_ALPHABET[(buffer shl (5 - bitsLeft)) and 0x1F])
+            }
+            return sb.toString()
+        }
+
+        fun computeStableTopic(pluginPeer: String, phonePeer: String): String {
+            val input = "$VERSION_PREFIX\n$pluginPeer\n$phonePeer"
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
+            return hash.joinToString("") { "%02x".format(it) }
+        }
     }
 }
 
