@@ -28,10 +28,6 @@ glass-peer/data/
 .DS_Store
 Thumbs.db
 
-# Docker
-docker-compose.override.yaml
-docker-compose.override.yml
-
 # Kubernetes
 *.kubeconfig
 kubeconfig

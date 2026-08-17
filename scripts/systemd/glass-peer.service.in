@@ -1,0 +1,20 @@
+[Unit]
+Description=Glass peer (Assistant Interface for GrokBot)
+Documentation=file://@REPO_ROOT@/README.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PEER_DIR@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=@ENV_FILE@
+ExecStart=@VENV_PYTHON@ main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# Pairing and the this-session log live in GLASS_DATA_DIR (see the env file).
+# A paired restart keeps phone_peer and sessionId; remint is explicit.
+
+[Install]
+WantedBy=default.target

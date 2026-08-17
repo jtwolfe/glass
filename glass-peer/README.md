@@ -6,6 +6,16 @@ Pairs one phone, holds the live session WebSocket, and talks to Grok Bot on this
 
 See the [root README](../README.md) for purpose, deploy, configuration, and the [security model](../SECURITY.md).
 
+Recommended (venv + systemd `--user`, survives logout/reboot when lingering is on):
+
+```bash
+../scripts/setup-glass-peer
+systemctl --user status glass-peer
+journalctl --user -u glass-peer -f
+```
+
+Foreground (no service):
+
 ```bash
 pip install -r requirements.txt
 export GLASS_PAIR_USERNAME=admin
@@ -14,6 +24,8 @@ export GLASS_DATA_DIR=./data
 # export GLASS_PUBLIC_WSS_URL=wss://chat.example.com/session
 python main.py
 ```
+
+Paired restarts keep `phone_peer`, `sessionId`, and `session-log.json` in `GLASS_DATA_DIR`. The socket is new each start.
 
 ```bash
 pip install pytest pytest-asyncio ruff

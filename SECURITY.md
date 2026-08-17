@@ -68,6 +68,8 @@ GLASS_PAIR_PASSWORD=$(openssl rand -base64 32)
 
 `GLASS_PAIR_USERNAME` and `GLASS_PAIR_PASSWORD` are required to start.
 
+`scripts/setup-glass-peer` writes those values to `~/.config/glass/peer.env` (mode `0600`) and a systemd **user** unit. That file is a secret. Do not copy it into the repo or onto the phone. Uninstalling the unit leaves the env file and data dir in place until you delete them.
+
 ### Network
 
 1. **Session bind defaults to loopback.** `Config.from_env` refuses `GLASS_SESSION_BIND` other than `127.0.0.1` / `::1` unless `GLASS_SESSION_ALLOW_NONLOCAL=1`.
@@ -76,7 +78,7 @@ GLASS_PAIR_PASSWORD=$(openssl rand -base64 32)
 
 3. **Same host/netns as the proxy** is the supported default. `proxy_pass http://127.0.0.1:8711` is then this machine. A split proxy is an explicit opt-in (private bind only).
 
-4. **Do not WAN-forward `8711` or `8080`.** Do not publish those ports in Docker. Do not listen them on a public address.
+4. **Do not WAN-forward `8711` or `8080`.** Do not listen them on a public address.
 
 5. **No Glass TLS.** Certificates stay in the reverse proxy. The phone does not pin.
 

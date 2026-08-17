@@ -6,6 +6,8 @@ xAI / SpaceXAI does not yet ship a complete first-party Android personal assista
 
 It is **not** an official xAI or SpaceXAI product.
 
+This tree is a working stopgap, not a polished install. Paths, Python, systemd `--user`, the reverse proxy, and Grok Bot’s gateway file all depend on the host. Expect to adjust binds, env, and proxy config for the machine you are on.
+
 ## What it does
 
 - Sideload an Android app and set it as the default assistant (long-press home).
@@ -43,11 +45,43 @@ phone  --wss://your.host/session-->  reverse proxy :443  --loopback-->  glass-pe
 
 You already have a reverse proxy and a certificate for a **dedicated hostname**. Examples below use `chat.example.com`. Use your own host. Do not commit real hostnames, LAN IPs, or credentials.
 
+### Setup wizard (recommended)
+
+`scripts/setup-glass-peer` walks the host side and installs a **systemd user** unit so `glass-peer` comes back after logout and reboot.
+
+```bash
+./scripts/setup-glass-peer
+```
+
+It will:
+
+1. Check Python, systemd `--user`, and (optionally) the Grok Bot gateway file
+2. **Ask for the public web address** (hostname or `wss://host/session`) and write it into the QR as `GLASS_PUBLIC_WSS_URL`. You can skip and set Session URL on the phone instead. The hostname is never guessed.
+3. Ask for remint username/password, data directory, and session bind
+4. Create a venv under `~/.local/share/glass/venv` and install `glass-peer/requirements.txt`
+5. Write `~/.config/glass/peer.env` (mode `0600`) and `~/.config/systemd/user/glass-peer.service`
+6. Offer lingering (`loginctl enable-linger`) so the unit survives logout
+7. `systemctl --user enable --now glass-peer`
+
+It does **not** write your reverse-proxy config or build the Android APK. Those steps are printed at the end.
+
+```bash
+systemctl --user status glass-peer
+journalctl --user -u glass-peer -f
+./scripts/setup-glass-peer --upgrade      # after git pull
+./scripts/setup-glass-peer --uninstall    # unit only; env + data stay
+./scripts/setup-glass-peer --help
+```
+
+Without lingering, a user service stops when you log out. Pairing still sits on disk; the process is just not running.
+
+Manual install (venv + `python main.py` in a terminal) is below if you do not want systemd.
+
 1. Run **Grok Bot** (the desktop Electron app) on the same machine as `glass-peer` so `~/.grokbot/local-exec-daemon-connection.json` exists. That is not the `grok` CLI.
 2. Put the reverse proxy and `glass-peer` on the **same host / network namespace** so `proxy_pass http://127.0.0.1:8711` is this machine. (If they cannot share a host, see [Split proxy](#split-proxy).)
 3. Publish **only** `location = /session` (or the equivalent exact path). Do **not** publish `/pair`, `/qr`, `/health`, or Grok Bot `/api/*`.
 4. Optional: `GLASS_PUBLIC_WSS_URL=wss://chat.example.com/session` so the QR includes a reachability hint.
-5. Start `glass-peer` (see [glass-peer](#glass-peer)).
+5. Start `glass-peer` with the wizard, or see [glass-peer](#glass-peer).
 6. On the phone: set Session URL if the QR has no `wss` hint, scan the QR, pick a PA, talk. Header **Connected** means hello-ok.
 
 ### Reverse proxy (nginx)
@@ -112,7 +146,9 @@ Notes:
 
 Default `GLASS_SESSION_BIND` is loopback and anything else is refused. If the TLS terminator is on another machine, set `GLASS_SESSION_ALLOW_NONLOCAL=1` and bind the session to a **private** address. Do not WAN-forward `:8711` or `:8080`. The phone still uses `wss://` to the public host. `ws://` to a LAN/private IP is allowed as a local fallback; the committed Android network-security config forbids cleartext, so a LAN `ws://` IP must be added locally if you use that path.
 
-### glass-peer
+### glass-peer (manual)
+
+Prefer [the wizard](#setup-wizard-recommended) unless you want a foreground process.
 
 ```bash
 cd glass-peer
@@ -127,6 +163,8 @@ python main.py
 ```
 
 Startup logs listen addresses, the public `wss` hint when set, the selected backend, and the QR JSON when unpaired.
+
+The wizard’s default data dir is `~/.local/share/glass/data`. Pairing (`state.json`) and the this-session log survive process and host restart when that directory is reused. The live WebSocket does not — the phone hellos again. Remint or deleting the data dir starts over.
 
 ## Agents
 
@@ -259,17 +297,6 @@ Unauthenticated, localhost only.
 
 `connected` is a live hello’d session, not “the proxy is up.”
 
-## Optional compose
-
-Intended run is `python main.py` next to the reverse proxy. `docker-compose.yaml` is a **host-network** sidecar with **no published ports**. A compose file on a different VM than the proxy is a 502 by construction.
-
-```bash
-cp .env.example .env
-docker compose up -d --build
-```
-
-Do not add `ports: ["8711:8711"]` or `["8080:8080"]`.
-
 ## Development
 
 ```bash
@@ -299,7 +326,9 @@ Android: open `android/` in Android Studio (not the repo root). See [android/REA
 
 **“Last known roster — desktop unreachable.”** — already on `grokbot`; live list failed. Send will error.
 
-**Replies say `echo:`** — no gateway file at process start. Start Grok Bot, then restart `glass-peer`.
+**Replies say `echo:`** — no gateway file at process start. Start Grok Bot, then `systemctl --user restart glass-peer`.
+
+**User service died after logout** — lingering is off. `loginctl enable-linger "$USER"` then `systemctl --user enable --now glass-peer`.
 
 **Force-stop then reopen: rows, no audio** — expected. Catch-up is this-session and silent.
 

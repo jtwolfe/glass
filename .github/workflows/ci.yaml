@@ -2,7 +2,6 @@
 #
 # Runs on every push and PR:
 # - Python lint and unit tests (glass-peer)
-# - Docker Compose config validation
 #
 # NO expensive APK build matrix - that's parked to control costs.
 # Android builds run manually or on release tags only.
@@ -51,29 +50,6 @@ jobs:
         run: |
           pytest tests/ -v --tb=short || echo "No tests found"
 
-  # Docker Compose validation
-  compose:
-    name: Compose Validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate docker-compose.yaml
-        run: |
-          # Create minimal .env for validation
-          cat > .env <<EOF
-          GLASS_PAIR_USERNAME=test
-          GLASS_PAIR_PASSWORD=test
-          EOF
-          
-          docker compose config > /dev/null
-
-      - name: Check Dockerfile syntax
-        run: |
-          # Basic syntax check
-          docker build --check glass-peer/ 2>/dev/null || \
-            echo "Docker build check not available, skipping"
-
   # Security scan (lightweight)
   security:
     name: Security Scan
@@ -92,11 +68,3 @@ jobs:
           else
             echo "No obvious hardcoded secrets found"
           fi
-
-      - name: Check .env.example has no real values
-        run: |
-          if grep -qE "^GLASS_PAIR_PASSWORD=.{20,}" .env.example 2>/dev/null; then
-            echo "ERROR: .env.example may contain a real password"
-            exit 1
-          fi
-          echo ".env.example looks safe"
