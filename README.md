@@ -336,4 +336,4 @@ Android: open `android/` in Android Studio (not the repo root). See [android/REA
 
 ## License
 
-Private repository. No public license is granted.
+[MIT](LICENSE).
