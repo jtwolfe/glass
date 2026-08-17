@@ -16,6 +16,19 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        val storePath = System.getenv("GLASS_STORE_FILE").orEmpty()
+        if (storePath.isNotBlank()) {
+            create("release") {
+                storeFile = file(storePath)
+                storePassword = System.getenv("GLASS_STORE_PASSWORD")
+                keyAlias = System.getenv("GLASS_KEY_ALIAS") ?: "glass"
+                keyPassword = System.getenv("GLASS_KEY_PASSWORD")
+                    ?: System.getenv("GLASS_STORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -23,6 +36,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
 

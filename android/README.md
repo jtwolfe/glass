@@ -8,7 +8,7 @@ The join path is `wss://` to **your** hostname (reverse proxy in front of `glass
 
 ## Install → Session URL → Scan → Talk
 
-1. **Install** the debug APK (`./gradlew assembleDebug`). Sideload; allow unknown sources when prompted.
+1. **Install** the release APK from the GitHub `v0.1.0` release, or build with `./gradlew assembleRelease` (needs `GLASS_STORE_*` signing env). Sideload; allow unknown sources when prompted. A debug-signed install must be uninstalled first.
 
 2. **Set as default assistant**: Settings → Apps → Default apps → Digital assistant app → Glass.
 
