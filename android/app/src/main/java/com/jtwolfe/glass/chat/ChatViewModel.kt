@@ -10,34 +10,28 @@ import com.jtwolfe.glass.GlassApplication
 import com.jtwolfe.glass.auth.TokenResult
 import com.jtwolfe.glass.displayText
 import com.jtwolfe.glass.auth.XaiAuthStore
-import com.jtwolfe.glass.inbox.InboxConfig
-import com.jtwolfe.glass.inbox.InboxSettings
 import com.jtwolfe.glass.inbox.V0Message
-import com.jtwolfe.glass.pairing.PluginClient
-import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.pairing.SendResult
+import com.jtwolfe.glass.pairing.SessionClient
 import com.jtwolfe.glass.settings.AgentSettings
 import com.jtwolfe.glass.settings.VoiceSettings
+import com.jtwolfe.glass.settings.WssSettings
+import com.jtwolfe.glass.settings.WssUrl
 import com.jtwolfe.glass.voice.SttResult
-import com.jtwolfe.glass.voice.TtsResult
 import com.jtwolfe.glass.voice.XaiVoiceClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class ChatUiState(
     val messages: List<V0Message> = emptyList(),
     val draft: String = "",
-    val inbox: InboxConfig = InboxConfig("", "", "unset"),
     val sending: Boolean = false,
     val status: String? = null,
     val error: String? = null,
@@ -46,6 +40,7 @@ data class ChatUiState(
     val partialTranscript: String = "",
     val selectedAgentName: String = "Glass",
     val selectedAgentId: String = "",
+    val sessionUrl: String = "",
 )
 
 data class SttError(
@@ -62,50 +57,41 @@ sealed class TranscribeResult {
 
 class ChatViewModel(
     application: Application,
-    private val settings: InboxSettings,
     private val repository: ChatRepository,
     private val xaiAuthStore: XaiAuthStore,
     private val voiceSettings: VoiceSettings,
     private val agentSettings: AgentSettings,
-    private val pluginClient: PluginClient? = null,
-    private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
+    private val wssSettings: WssSettings,
+    private val sessionClient: SessionClient? = null,
     private val connectionStateProvider: (() -> ConnectionState)? = null,
-    private val onReconnectRequest: ((pendingText: String?) -> Unit)? = null,
+    private val onReconnectRequest: ((pendingText: String?, force: Boolean) -> Unit)? = null,
     private val xaiVoiceClient: XaiVoiceClient = XaiVoiceClient(),
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
-    private val _newAssistantMessages = Channel<V0Message>(Channel.BUFFERED)
-    val newAssistantMessages = _newAssistantMessages.receiveAsFlow()
-
-    private var pollJob: Job? = null
-    private var afterCursor: String = EPOCH
-    private var lastSpokenAt: String = EPOCH
-
     private var pendingSendText: String? = null
 
     private val connectionState: ConnectionState
         get() = connectionStateProvider?.invoke() ?: ConnectionState.UNPAIRED
 
-    private val isWebRtcConnected: Boolean
-        get() = connectionState == ConnectionState.CONNECTED
-
-    private val isPluginConnected: Boolean
-        get() = pluginClient?.isConnected == true && pluginClient.isPaired
-
     private val canSendRemote: Boolean
-        get() = isWebRtcConnected || isPluginConnected || _state.value.inbox.isHttpConfigured
+        get() = sessionClient?.isHelloed == true
 
     init {
         viewModelScope.launch {
-            val local = repository.loadLocal()
-            _state.update { it.copy(messages = local) }
-            afterCursor = local.maxOfOrNull { it.at } ?: EPOCH
-            lastSpokenAt = local
-                .filter { it.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) }
-                .maxOfOrNull { it.at } ?: EPOCH
+            repository.messages.collect { msgs ->
+                _state.update { it.copy(messages = msgs) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.agentError.collect { err ->
+                if (err != null) {
+                    _state.update { it.copy(error = err.banner) }
+                }
+            }
         }
 
         viewModelScope.launch {
@@ -119,14 +105,8 @@ class ChatViewModel(
         }
 
         viewModelScope.launch {
-            settings.config.collect { config ->
-                _state.update { ui ->
-                    ui.copy(inbox = config)
-                }
-                restartPolling(config)
-                if (canSendRemote) {
-                    refreshRemote(config)
-                }
+            wssSettings.publicUrl.collect { url ->
+                _state.update { it.copy(sessionUrl = url) }
             }
         }
     }
@@ -150,45 +130,13 @@ class ChatViewModel(
         send()
     }
 
-    fun onAssistOpened() {
-        refresh()
-    }
-
-    fun onPluginConnected() {
-        val config = _state.value.inbox
+    fun onSessionReady() {
         _state.update { ui ->
             ui.copy(
-                status = "Connected (TCP)",
-            )
-        }
-        restartPolling(config)
-        viewModelScope.launch { refreshRemote(config) }
-    }
-
-    fun onPluginDisconnected() {
-        val config = _state.value.inbox
-        _state.update { ui ->
-            ui.copy(
-                status = when {
-                    isWebRtcConnected -> "Plugin connected (WebRTC DataChannel)"
-                    config.isHttpConfigured -> "Inbox HTTP (${config.source})"
-                    else -> "Local-only — scan QR to connect via ntfy"
-                },
-            )
-        }
-        restartPolling(config)
-    }
-
-    fun onWebRtcConnected() {
-        val config = _state.value.inbox
-        _state.update { ui ->
-            ui.copy(
-                status = ConnectionState.CONNECTED.displayText,
+                status = connectionState.displayText,
                 error = null,
             )
         }
-        restartPolling(config)
-        viewModelScope.launch { refreshRemote(config) }
 
         val pending = pendingSendText
         if (pending != null) {
@@ -201,12 +149,10 @@ class ChatViewModel(
         }
     }
 
-    fun onWebRtcDisconnected() {
-        val config = _state.value.inbox
+    fun onSessionDisconnected() {
         _state.update { ui ->
             ui.copy(status = connectionState.displayText)
         }
-        restartPolling(config)
     }
 
     fun onReconnecting() {
@@ -225,11 +171,8 @@ class ChatViewModel(
         pendingSendText = null
     }
 
-    fun refresh() {
-        val config = _state.value.inbox
-        if (canSendRemote) {
-            viewModelScope.launch { refreshRemote(config) }
-        }
+    suspend fun clearLocal() {
+        repository.clear()
     }
 
     fun send() {
@@ -237,7 +180,13 @@ class ChatViewModel(
         if (text.isEmpty() || _state.value.sending) return
 
         val currentState = connectionState
-        if (currentState == ConnectionState.OFFLINE_PAIRED) {
+        if (!canSendRemote) {
+            if (currentState == ConnectionState.UNPAIRED) {
+                _state.update {
+                    it.copy(error = "Not connected — pair with plugin first")
+                }
+                return
+            }
             pendingSendText = text
             _state.update {
                 it.copy(
@@ -245,19 +194,12 @@ class ChatViewModel(
                     error = "Reconnecting to send...",
                 )
             }
-            onReconnectRequest?.invoke(text)
-            return
-        }
-
-        if (currentState == ConnectionState.UNPAIRED && !_state.value.inbox.isHttpConfigured && !isPluginConnected) {
-            _state.update {
-                it.copy(error = "Not connected — pair with plugin first")
-            }
+            onReconnectRequest?.invoke(text, true)
             return
         }
 
         val outgoing = V0Message.outgoing(text)
-        val agentId = _state.value.selectedAgentId
+        val agentId = _state.value.selectedAgentId.takeIf { it.isNotBlank() }
         viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -265,69 +207,61 @@ class ChatViewModel(
                     sending = true,
                     error = null,
                     sttError = null,
-                    messages = it.messages + outgoing,
                 )
             }
-            persistLocal()
-            val config = _state.value.inbox
+            repository.appendOutgoing(outgoing)
             if (canSendRemote) {
-                runCatching { repository.sendRemote(config, outgoing, agentId) }
-                    .onFailure { err ->
-                        _state.update {
-                            it.copy(error = err.message ?: "Send failed — kept locally")
+                try {
+                    when (val result = repository.sendRemote(outgoing, agentId)) {
+                        is SendResult.Success -> Unit
+                        is SendResult.NotConnected -> {
+                            _state.update {
+                                it.copy(error = "Send failed — kept locally")
+                            }
+                            onReconnectRequest?.invoke(null, true)
+                        }
+                        is SendResult.Error -> {
+                            _state.update {
+                                it.copy(error = result.message)
+                            }
                         }
                     }
-                refreshRemote(config)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (err: Exception) {
+                    _state.update {
+                        it.copy(error = err.message ?: "Send failed — kept locally")
+                    }
+                }
             }
             _state.update { it.copy(sending = false) }
         }
     }
 
-    fun saveInbox(url: String, token: String) {
+    fun saveSessionUrl(url: String) {
         viewModelScope.launch {
-            settings.save(url, token)
+            val trimmed = url.trim()
+            val parsed = if (trimmed.isEmpty()) null else WssUrl.parse(trimmed)
+            if (trimmed.isNotEmpty() && parsed == null) {
+                _state.update { it.copy(error = "Invalid session URL") }
+                return@launch
+            }
+            val previous = wssSettings.current()
+            wssSettings.save(trimmed)
+            val canonical = parsed?.canonical.orEmpty()
+            val paired = (getApplication<Application>() as? GlassApplication)?.pairingStore?.isPaired == true
+            if (canonical != previous && paired) {
+                if (sessionClient?.isHelloed == true) {
+                    sessionClient.disconnect()
+                }
+                onReconnectRequest?.invoke(null, true)
+            }
         }
     }
 
     fun dismissError() {
         _state.update { it.copy(error = null) }
-    }
-
-    /**
-     * Fetch reply audio. Prefers xAI TTS when logged in, falls back to inbox audio.
-     */
-    suspend fun fetchReplyAudio(id: String): ByteArray? {
-        val config = _state.value.inbox
-        if (id.isBlank()) return null
-
-        // Try inbox audio endpoint first (it may have pre-rendered audio)
-        if (config.isHttpConfigured) {
-            val inboxAudio = runCatching { repository.fetchReplyAudio(config, id) }.getOrNull()
-            if (inboxAudio != null && inboxAudio.isNotEmpty()) {
-                return inboxAudio
-            }
-        }
-
-        return null
-    }
-
-    /**
-     * Synthesize speech using xAI TTS when logged in.
-     * Returns null if not logged in or on error (caller should use on-device TTS).
-     */
-    suspend fun synthesizeXaiTts(text: String): ByteArray? {
-        if (text.isBlank()) return null
-        val bearer = when (val tokenResult = xaiAuthStore.getOrRefreshAccessToken()) {
-            is TokenResult.Valid -> tokenResult.accessToken
-            else -> return null
-        }
-        val voiceId = voiceSettings.voiceId.first()
-        return withContext(Dispatchers.IO) {
-            when (val result = xaiVoiceClient.synthesize(bearer, text, voiceId)) {
-                is TtsResult.Success -> result.audio
-                is TtsResult.Error -> null
-            }
-        }
+        viewModelScope.launch { repository.dismissAgentError() }
     }
 
     fun setSttError(error: SttError?) {
@@ -382,82 +316,24 @@ class ChatViewModel(
 
     val hasXaiAuth: Boolean get() = xaiAuthStore.isLoggedIn
 
-    private suspend fun refreshRemote(config: InboxConfig) {
-        runCatching { repository.pullReplies(config, afterCursor) }
-            .onSuccess { remote ->
-                if (remote.isNotEmpty()) {
-                    afterCursor = remote.maxOf { it.at }
-                }
-                val newAssistantMsgs = remote.filter { msg ->
-                    msg.from.equals(V0Message.FROM_ASSISTANT, ignoreCase = true) &&
-                        msg.at > lastSpokenAt
-                }
-                if (newAssistantMsgs.isNotEmpty()) {
-                    lastSpokenAt = newAssistantMsgs.maxOf { it.at }
-                    newAssistantMsgs.sortedBy { it.at }.forEach { msg ->
-                        _newAssistantMessages.trySend(msg)
-                    }
-                }
-                _state.update { ui ->
-                    ui.copy(messages = merge(ui.messages, remote), error = null)
-                }
-                persistLocal()
-            }
-            .onFailure { err ->
-                _state.update { it.copy(error = err.message ?: "Inbox unreachable") }
-            }
-    }
-
-    private fun restartPolling(config: InboxConfig) {
-        pollJob?.cancel()
-        if (!canSendRemote) return
-        pollJob = viewModelScope.launch {
-            while (isActive) {
-                delay(8_000)
-                refreshRemote(config)
-            }
-        }
-    }
-
-    private suspend fun persistLocal() {
-        repository.saveLocal(_state.value.messages)
-    }
-
-    private fun merge(local: List<V0Message>, remote: List<V0Message>): List<V0Message> {
-        val seen = LinkedHashSet<String>()
-        return (local + remote).filter { msg ->
-            val key = msg.id?.takeIf { it.isNotBlank() } ?: "${msg.from}|${msg.at}|${msg.text}"
-            seen.add(key)
-        }.sortedBy { it.at }
-    }
-
     companion object {
-        private const val EPOCH = "1970-01-01T00:00:00Z"
-
         fun factory(
             application: Application,
-            onReconnectRequest: ((pendingText: String?) -> Unit)? = null,
+            onReconnectRequest: ((pendingText: String?, force: Boolean) -> Unit)? = null,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     val app = application as GlassApplication
-                    val webRtcProvider: () -> WebRtcPeerConnection? = { app.webRtcConnection }
                     val connectionStateProvider: () -> ConnectionState = { app.connectionState.value }
                     return ChatViewModel(
                         application = app,
-                        settings = app.inboxSettings,
-                        repository = ChatRepository(
-                            context = app,
-                            streamClient = app.inboxStreamClient,
-                            pluginClient = app.pluginClient,
-                            webRtcConnectionProvider = webRtcProvider,
-                        ),
+                        repository = app.chatRepository,
                         xaiAuthStore = app.xaiAuthStore,
                         voiceSettings = app.voiceSettings,
                         agentSettings = app.agentSettings,
-                        pluginClient = app.pluginClient,
-                        webRtcConnectionProvider = webRtcProvider,
+                        wssSettings = app.wssSettings,
+                        sessionClient = app.sessionClient,
                         connectionStateProvider = connectionStateProvider,
                         onReconnectRequest = onReconnectRequest,
                     ) as T

@@ -59,7 +59,6 @@ import java.util.concurrent.Executors
 fun PairingScreen(
     onBack: () -> Unit,
     onPaired: (PairingInvite) -> Unit,
-    relayConfigured: Boolean,
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -71,7 +70,6 @@ fun PairingScreen(
             ) == PackageManager.PERMISSION_GRANTED,
         )
     }
-    var shortCode by rememberSaveable { mutableStateOf("") }
     var pastedJson by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var scannedInvite by remember { mutableStateOf<PairingInvite?>(null) }
@@ -203,31 +201,6 @@ fun PairingScreen(
                 Text("Paste from Clipboard")
             }
 
-            Text(
-                "Typed 8-char code (/glass/pair/<code>):",
-                style = MaterialTheme.typography.titleSmall,
-            )
-
-            OutlinedTextField(
-                value = shortCode,
-                onValueChange = { shortCode = it.uppercase().take(8) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Short code (stubbed)") },
-                placeholder = { Text("K7M2Q9WH") },
-                singleLine = true,
-            )
-
-            Button(
-                onClick = {
-                    error = "Typed-code pairing via gossipsub /glass/pair/<code> is stubbed. " +
-                        "Scan the QR code or paste the JSON instead."
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = shortCode.length == 8,
-            ) {
-                Text("Pair with code (stubbed)")
-            }
-
             error?.let { msg ->
                 Text(
                     text = msg,
@@ -239,8 +212,10 @@ fun PairingScreen(
             Spacer(Modifier.weight(1f))
 
             Text(
-                "After scanning a v1 invite, the phone connects via ntfy signaling to establish a " +
-                    "WebRTC DataChannel. Chat never goes through ntfy. Hard NAT fails closed.",
+                "Talk uses the Session URL in Settings. " +
+                    "Default is wss://glass.enphi.net/session (HTTPS via your reverse proxy). " +
+                    "Do not use 127.0.0.1 — that is this phone. " +
+                    "A QR hint is used only when Settings is empty.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

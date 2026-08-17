@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * - POST https://api.x.ai/v1/tts  JSON: {text, voice_id, language}
  *
  * The xAI bearer NEVER leaves the phone:
- * - Never sent to inbox public URL
+ * - Never sent to a third-party inbox
  * - Never sent to Quay's tunnel
  * - Only used for direct api.x.ai calls
  */

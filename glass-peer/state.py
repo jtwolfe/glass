@@ -1,12 +1,28 @@
 """Persistent state for glass-peer pairing."""
 
 import json
+import secrets
 import threading
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mint import Invite, compute_stable_topic
+from mint import Invite
+
+
+def codes_equal(left: str, right: str) -> bool:
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    a = left.upper()
+    b = right.upper()
+    if len(a) != len(b):
+        return False
+    try:
+        return secrets.compare_digest(a.encode("ascii"), b.encode("ascii"))
+    except UnicodeEncodeError:
+        return False
 
 
 @dataclass
@@ -22,17 +38,14 @@ class PairState:
     # When pairing was established
     paired_at: str | None = None
 
+    session_id: str | None = None
+    reply_seq: int = 0
+    code_consumed: bool = False
+
     @property
     def is_paired(self) -> bool:
         """Check if a phone is paired."""
         return self.phone_peer is not None
-
-    @property
-    def stable_topic(self) -> str | None:
-        """Compute stable reconnect topic if paired."""
-        if not self.is_paired or not self.invite:
-            return None
-        return compute_stable_topic(self.invite.peer, self.phone_peer)
 
     def mark_paired(self, phone_peer: str) -> None:
         """Mark as paired with the given phone peer."""
@@ -46,7 +59,10 @@ class PairState:
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
-        result = {}
+        result: dict = {
+            "reply_seq": self.reply_seq,
+            "code_consumed": self.code_consumed,
+        }
         if self.invite:
             result["invite"] = {
                 "version": self.invite.version,
@@ -59,6 +75,8 @@ class PairState:
             result["phone_peer"] = self.phone_peer
         if self.paired_at:
             result["paired_at"] = self.paired_at
+        if self.session_id:
+            result["session_id"] = self.session_id
         return result
 
     @classmethod
@@ -76,6 +94,12 @@ class PairState:
             )
         state.phone_peer = data.get("phone_peer")
         state.paired_at = data.get("paired_at")
+        state.session_id = data.get("session_id")
+        state.reply_seq = int(data.get("reply_seq") or 0)
+        if "code_consumed" in data:
+            state.code_consumed = bool(data.get("code_consumed"))
+        else:
+            state.code_consumed = bool(state.phone_peer)
         return state
 
 
@@ -88,6 +112,20 @@ class StateStore:
         self._state_file = self._data_dir / "state.json"
         self._lock = threading.Lock()
         self._state: PairState = self._load()
+        self._session_wipe: Callable[[], None] | None = None
+
+    @property
+    def data_dir(self) -> Path:
+        return self._data_dir
+
+    def bind_session_log(self, clear: Callable[[], None]) -> None:
+        """Remint / rotate must wipe the session log (call after releasing lock)."""
+        self._session_wipe = clear
+
+    def _fire_session_wipe(self) -> None:
+        hook = self._session_wipe
+        if hook is not None:
+            hook()
 
     def _load(self) -> PairState:
         """Load state from disk."""
@@ -116,13 +154,76 @@ class StateStore:
         with self._lock:
             self._state.invite = invite
             self._state.clear_pair()
+            self._state.session_id = str(uuid.uuid4())
+            self._state.reply_seq = 0
+            self._state.code_consumed = False
             self._save()
+        self._fire_session_wipe()
 
     def mark_paired(self, phone_peer: str) -> None:
         """Mark as paired with phone."""
         with self._lock:
             self._state.mark_paired(phone_peer)
             self._save()
+
+    def rotate_session(self) -> str:
+        """Mint a new session_id and reset reply_seq. Pair identity is kept."""
+        with self._lock:
+            self._state.session_id = str(uuid.uuid4())
+            self._state.reply_seq = 0
+            self._save()
+            sid = self._state.session_id
+        self._fire_session_wipe()
+        return sid
+
+    def ensure_session_id(self) -> str:
+        """Mint session_id if missing. Does not reset reply_seq or wipe the log."""
+        with self._lock:
+            if not self._state.session_id:
+                self._state.session_id = str(uuid.uuid4())
+                self._save()
+            return self._state.session_id
+
+    def set_reply_seq(self, seq: int) -> None:
+        """Write reply_seq (SessionLog allocate / bind repair)."""
+        with self._lock:
+            self._state.reply_seq = int(seq)
+            self._save()
+
+    def try_consume_pair(
+        self, accepted_code: str, hello_peer: str
+    ) -> tuple[bool, str | None]:
+        """Consume the current invite on a just-paired hello. Atomic."""
+        with self._lock:
+            invite = self._state.invite
+            if invite is None or not codes_equal(accepted_code, invite.code):
+                return False, "rejected"
+            if self._state.code_consumed:
+                return False, "rejected"
+            if self._state.phone_peer and self._state.phone_peer != hello_peer:
+                return False, "wrong_peer"
+            self._state.code_consumed = True
+            self._state.mark_paired(hello_peer)
+            self._save()
+            return True, None
+
+    def check_reconnect(self, hello_peer: str) -> tuple[bool, str | None]:
+        """Reconnect hello: require stored phone_peer. Never mark_paired."""
+        with self._lock:
+            phone = self._state.phone_peer
+            if not phone:
+                return False, "unpaired"
+            if phone != hello_peer:
+                return False, "wrong_peer"
+            return True, None
+
+    def take_reply_seq(self) -> int:
+        """Return the next reply seq and increment."""
+        with self._lock:
+            seq = self._state.reply_seq
+            self._state.reply_seq += 1
+            self._save()
+            return seq
 
     def get_invite(self) -> Invite | None:
         """Get current invite."""
@@ -134,10 +235,20 @@ class StateStore:
         with self._lock:
             return self._state.phone_peer
 
-    def get_stable_topic(self) -> str | None:
-        """Get stable reconnect topic if paired."""
+    def get_session_id(self) -> str | None:
+        """Get current plugin session id."""
         with self._lock:
-            return self._state.stable_topic
+            return self._state.session_id
+
+    def get_reply_seq(self) -> int:
+        """Get the first unused reply seq (does not increment)."""
+        with self._lock:
+            return self._state.reply_seq
+
+    def is_code_consumed(self) -> bool:
+        """Whether the current invite code has been consumed by a hello."""
+        with self._lock:
+            return self._state.code_consumed
 
     def is_paired(self) -> bool:
         """Check if paired."""

@@ -151,7 +151,18 @@ fun ChatScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(state.messages, key = { "${it.from}|${it.at}|${it.text}" }) { msg ->
+                items(
+                    state.messages,
+                    key = { msg ->
+                        val sid = msg.sessionId
+                        val seq = msg.seq
+                        if (!sid.isNullOrBlank() && seq != null) {
+                            "$sid|$seq"
+                        } else {
+                            "${msg.from}|${msg.at}|${msg.text}"
+                        }
+                    },
+                ) { msg ->
                     MessageBubble(msg, state.selectedAgentName)
                 }
             }

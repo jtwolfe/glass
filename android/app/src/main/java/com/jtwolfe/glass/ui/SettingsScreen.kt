@@ -1,6 +1,5 @@
 package com.jtwolfe.glass.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -27,7 +24,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,30 +41,29 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jtwolfe.glass.ConnectionState
 import com.jtwolfe.glass.auth.XaiAuthBundle
 import com.jtwolfe.glass.displayText
-import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.pairing.PairingInvite
+import com.jtwolfe.glass.pairing.agentErrorBanner
 import com.jtwolfe.glass.settings.Agent
+import com.jtwolfe.glass.settings.AgentRosterState
 import com.jtwolfe.glass.settings.VoiceSettings
+import com.jtwolfe.glass.settings.WssSettings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    inbox: InboxConfig,
     xaiAuth: XaiAuthBundle?,
     pairing: PairingInvite?,
     connectionState: ConnectionState,
     isDefaultAssistant: Boolean,
     xaiLoginLoading: Boolean,
     selectedVoiceId: String,
-    availableAgents: List<Agent>,
+    roster: AgentRosterState,
     selectedAgentId: String,
     onBack: () -> Unit,
-    onSaveInbox: (String, String) -> Unit,
     onRequestAssistantRole: () -> Unit,
     onOpenAssistantSettings: () -> Unit,
     onXaiLogin: () -> Unit,
@@ -77,14 +72,17 @@ fun SettingsScreen(
     onClearPairing: () -> Unit,
     onVoiceSelected: (String) -> Unit,
     onAgentSelected: (Agent) -> Unit,
+    onRefreshAgents: () -> Unit,
+    sessionUrl: String,
+    onSaveSessionUrl: (String) -> Unit,
 ) {
-    var url by rememberSaveable { mutableStateOf(inbox.url) }
-    var token by rememberSaveable { mutableStateOf(inbox.token) }
-    var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var wssUrl by rememberSaveable { mutableStateOf(sessionUrl) }
 
-    LaunchedEffect(inbox.url, inbox.token) {
-        if (url.isEmpty()) url = inbox.url
-        if (token.isEmpty()) token = inbox.token
+    LaunchedEffect(sessionUrl) {
+        if (wssUrl.isEmpty()) wssUrl = sessionUrl
+    }
+    LaunchedEffect(Unit) {
+        onRefreshAgents()
     }
 
     Scaffold(
@@ -128,14 +126,13 @@ fun SettingsScreen(
 
             // Agent picker section
             AgentPickerSection(
-                availableAgents = availableAgents,
+                roster = roster,
                 selectedAgentId = selectedAgentId,
                 onAgentSelected = onAgentSelected,
             )
 
             HorizontalDivider()
 
-            // Inbox pairing section
             PairingSection(
                 pairing = pairing,
                 connectionState = connectionState,
@@ -154,16 +151,10 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // Advanced HTTPS fallback (hidden by default)
-            AdvancedHttpsSection(
-                expanded = showAdvanced,
-                onToggle = { showAdvanced = !showAdvanced },
-                inbox = inbox,
-                url = url,
-                token = token,
-                onUrlChange = { url = it },
-                onTokenChange = { token = it },
-                onSave = { onSaveInbox(url, token) },
+            SessionUrlSection(
+                url = wssUrl,
+                onUrlChange = { wssUrl = it },
+                onSave = { onSaveSessionUrl(wssUrl) },
             )
         }
     }
@@ -272,57 +263,86 @@ private fun VoicePickerSection(
 
 @Composable
 private fun AgentPickerSection(
-    availableAgents: List<Agent>,
+    roster: AgentRosterState,
     selectedAgentId: String,
     onAgentSelected: (Agent) -> Unit,
 ) {
+    val agents = roster.agents
+    val lastError = roster.lastError
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Default Agent", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Select which agent to chat with.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            availableAgents.forEach { agent ->
-                val isSelected = agent.id == selectedAgentId
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onAgentSelected(agent) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    ),
-                    border = if (isSelected) {
-                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                    } else null,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = agent.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (isSelected) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                        if (isSelected) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = "Selected",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+        when {
+            agents.isEmpty() && lastError == null -> {
+                Text(
+                    "No Grok Bot agents. Create one on the desktop.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            agents.isEmpty() -> {
+                Text(
+                    "Couldn't load agents.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    agentErrorBanner(lastError),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            else -> {
+                Text(
+                    if (roster.stale || lastError != null) {
+                        "Last known roster — desktop unreachable."
+                    } else {
+                        "Select which agent to chat with."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    agents.forEach { agent ->
+                        val isSelected = agent.id == selectedAgentId && selectedAgentId.isNotBlank()
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAgentSelected(agent) },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                            ),
+                            border = if (isSelected) {
+                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            } else null,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = agent.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -417,61 +437,33 @@ private fun PairingSection(
 }
 
 @Composable
-private fun AdvancedHttpsSection(
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    inbox: InboxConfig,
+private fun SessionUrlSection(
     url: String,
-    token: String,
     onUrlChange: (String) -> Unit,
-    onTokenChange: (String) -> Unit,
     onSave: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Text("Session URL", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Public: wss://glass.enphi.net/session (HTTPS reverse proxy). " +
+                "LAN fallback: ws://192.168.1.200:8711/session. " +
+                "Do not use 127.0.0.1 — that is this phone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = url,
+            onValueChange = onUrlChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Session URL") },
+            placeholder = { Text(WssSettings.PLACEHOLDER) },
+            singleLine = true,
+        )
+        Button(
+            onClick = onSave,
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Advanced", style = MaterialTheme.typography.titleMedium)
-            Icon(
-                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-            )
-        }
-
-        AnimatedVisibility(visible = expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "HTTP inbox fallback (optional). WebRTC is preferred.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = onTokenChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Bearer token") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = onUrlChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Inbox URL") },
-                    singleLine = true,
-                )
-                Button(
-                    onClick = onSave,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Save")
-                }
-            }
+            Text("Save")
         }
     }
 }

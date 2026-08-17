@@ -1,62 +1,51 @@
 # Glass Android
 
-Jamie ↔ Ashleigh chat that can replace the default assistant on long-press home.
+Phone client for the operator WSS session. Scan the plugin QR, dial **your** Session URL, talk. One install, one plugin.
 
-Nash owns this client. Plugin is the pair target. Phone scans only. No container. HTTP inbox is parked.
+The join path is `wss://` to the operator hostname (nginx on the same host/netns as `glass-peer`). There is no mDNS browse, no LAN TCP `:8711`, no HTTP inbox, and no FCM / ntfy.
 
 ---
 
-## Quick Start: Install → Pair → Talk
+## Quick Start: Install → Session URL → Scan → Talk
 
-1. **Install** the debug APK from GitHub Release `apk-debug-0.1.0` (`glass-debug-0.1.0.apk`). Sideload on device; allow unknown sources when prompted.
+1. **Install** the debug APK (`./gradlew assembleDebug`, or the GitHub Release `apk-debug-0.1.0` when you have one). Sideload; allow unknown sources when prompted.
 
 2. **Set as default assistant**: Settings → Apps → Default apps → Digital assistant app → Glass.
 
 3. **Grant microphone** when prompted on first voice use.
 
-4. **Scan the plugin v1 QR** in Settings → Pair Plugin. The QR is raw JSON (UTF-8, not a URL):
+4. **Set Session URL** in Settings (required unless the QR includes a `wss` hint):
+
+   - Field: **Session URL**
+   - Placeholder: `wss://chat.example.com/session`
+   - Scheme `wss` only (`ws` / `http` / `https` are rejected)
+   - Bare `wss://chat.example.com` (or `wss://chat.example.com/`) canonicalizes to `wss://chat.example.com/session`
+   - Settings overrides a QR `wss` hint and survives unpair / remint
+
+   Same-host nginx (`location = /session` → `http://127.0.0.1:8711`) is documented in the [root README](../README.md). The phone never dials `:8711` itself.
+
+5. **Scan the plugin v1 QR** in Settings → Pair Plugin. The QR is raw JSON (UTF-8, not a URL):
 
    ```json
-   {"v":1,"peer":"<52 char lowercase base32>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>"}
+   {"v":1,"peer":"<52 char lowercase base32>","pub":"<64 hex>","code":"<8 Crockford>","exp":"<ISO>","wss":"wss://chat.example.com/session"}
    ```
 
-   - `peer`: 52-char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(device pub)
+   - `peer`: 52-char lowercase RFC 4648 base32 (a-z2-7) of SHA-256(pub)
      Example shape: `5coyrsvqsuzekhvfx3vlp7g4gr3aqphxrhqp6dllcwbi7xlfok4q`
-   - `pub`: X25519 ephemeral provision public key (64 hex chars, stored encrypted)
-   - `code`: 8-char Crockford code (A-HJ-NP-Z2-9, no I L O 0 1)
-   - `exp`: ISO-8601 expiration (~15 min)
-   - No `addrs`, no `psk`. Phone does NOT mint.
+   - `pub`: 64 hex chars (identity material)
+   - `code`: 8-char Crockford — `0-9A-HJKMNP-TV-Z`, **no I L O U**. **`0` and `1` are valid.**
+   - `exp`: ISO-8601 expiration (plugin default 300s)
+   - `wss`: optional reachability hint. Used only when Settings is empty (then pre-filled). Not pairing identity.
+   - Phone does not mint. Paste JSON works if you cannot scan.
 
-5. **Phone browses `_glass-pair._tcp.`** on LAN to find the plugin.
-   - Instance name = `peer` string from QR exactly (52-char lowercase base32)
-   - Takes host:port from NSD advertisement only (no baked values)
-   - Skips loopback (127.x), docker bridge (172.17.x)
-   - If not found in ~10s: **fail-closed** — "Plugin not on this LAN"
-   - If found: "Found plugin on LAN — waiting for pair accept"
+6. **Talk** when the header says **Connected** (hello-ok). Plugin off, nginx `502`, or a wrong URL is **Offline**. One send can produce several assistant rows. Background / doze may drop the socket; the next hello shows this-session missed replies as **text only** (silent). There is no FCM / ntfy.
 
-6. **Talk** when pair accept is ready. Messages go to Ashleigh.
+### Pairing notes (v1)
 
-### Pairing protocol notes (v1)
-
-- Phone scans only. Phone does NOT call GET /v0/pair.
-- After scan, phone browses mDNS/NSD for `_glass-pair._tcp.` on LAN.
-- Plugin advertises with instance name = peer (64 hex).
-- LAN host stored in memory only (not git).
-- Off-LAN connections fail closed — no relay, no fallback host.
-- **Typed 8-char code pairing** (`/glass/pair/<code>` gossipsub) is **stubbed** — scan the QR or paste JSON.
-- Routed agent is plugin config (default Ashleigh). Phone does not pick the agent.
-
-### Service type
-
-The phone browses for mDNS service type:
-
-```
-_glass-pair._tcp.
-```
-
-The plugin advertises the same service type with:
-- Instance name = `peer` string (52-char lowercase RFC 4648 base32, a-z2-7)
-- host:port from NSD advertisement (phone does not bake any host or port)
+- Phone scans or pastes JSON. It does not call `GET /pair`.
+- URL resolve: Settings → QR `wss` hint → last successful URL for this plugin. Missing all three: “Set session URL in Settings.”
+- One phone. Remint on the host (`curl` to `http://127.0.0.1:8080/pair`) evicts this install, wipes the local thread, and wipes the peer this-session log.
+- Phone Settings picks a **Grok Bot desktop PA** (named roster). The process is still `glass-peer`; the phone does not pair to Grok Bot or to the `grok` CLI.
 
 ---
 
@@ -64,61 +53,41 @@ The plugin advertises the same service type with:
 
 The app registers as a `VoiceInteractionService` and handles `ACTION_ASSIST`. On first run / Settings, it requests `RoleManager.ROLE_ASSISTANT` and falls back to system voice-input / default-assistant settings.
 
-Long-press home (or any assist gesture) opens the Ashleigh chat and **immediately starts listening** for voice input.
+Long-press home (or any assist gesture) opens the chat and **immediately starts listening** for voice input.
 
 ## Voice input & output
 
 ### Microphone permission
 
-The app requests `RECORD_AUDIO` permission when you first try to use voice. A brief rationale explains that Jamie's voice goes to Ashleigh.
+The app requests `RECORD_AUDIO` permission when you first try to use voice.
 
 ### Hold-to-talk
 
 - **Mic button** in the composer: hold to talk, release to send
 - **On assist open** (long-press home): automatically starts listening
-- Default: Android `SpeechRecognizer` (on-device STT, no paid cloud)
+- Default: Android `SpeechRecognizer` (on-device STT)
 - Final transcript posts just like typed messages
 
 ### Spoken replies
 
-When Ashleigh replies:
+When the assistant replies on the live pipe **in the foreground**:
 
 1. Try xAI TTS if logged in (bearer on device only)
 2. Fall back to Android `TextToSpeech`
 
-TTS stops if you start a new voice input.
+Clips play **one after another**. The next clip is prefetched while the current one plays. A new live reply does not cut the previous clip.
+
+Catch-up (hello flush after the process was dead) and replies that arrive in the background are **text only** — they never speak, including on resume. Hello sends integer `lastSeenSeq` so the peer can flush this session only; older APKs that omit the field get no flush.
+
+TTS is watermarked (`sessionId`, `seq`). Remint / unpair / reinstall → empty thread, no TTS of previous messages.
+
+TTS stops if you start a new voice input or leave the foreground.
 
 ### Keyboard fallback
 
 The typed composer remains available.
 
 ---
-
-## Legacy: P2P Stream (glass-pair/v0)
-
-v0 pairing is legacy and kept only for backward compatibility. v1 is the current path.
-
-### v0 Pairing handshake (legacy)
-
-1. Phone scans QR → parses `{v,peer,addrs,proto,code,psk,exp}`.
-2. Phone dials inbox multiaddrs (TCP + Noise + Mplex).
-3. Opens stream `/glass/inbox/v0`.
-4. First frame: `{"psk":"<64 hex from QR>"}` (unsigned-varint length-prefixed JSON).
-5. Inbox verifies PSK and replies: `{status:200,body:{paired:true}}`.
-
-### Frame format
-
-All frames are **unsigned-varint** (multiformats) length prefix followed by UTF-8 JSON bytes.
-
----
-
-## Legacy: HTTP Inbox (parked)
-
-HTTP inbox is parked. v1 pairing uses LAN discovery instead.
-
-Token in Settings is optional (only if bearer needed later). URL field is hidden/advanced.
-
-Do **not** invent URLs, tokens, or relay addrs. Do not put secrets in git or the APK.
 
 ## How to run
 
@@ -130,10 +99,10 @@ Do **not** invent URLs, tokens, or relay addrs. Do not put secrets in git or the
    ```
 
    or let Android Studio create `gradle/wrapper/gradle-wrapper.jar`.
-3. Set `sdk.dir` in `local.properties`. URL/token are optional (HTTP inbox parked).
-4. Sideload the debug APK (or the GitHub Release `apk-debug-0.1.0`).
-5. Grant Glass as the default assistant.
-6. Long-press home to open Ashleigh.
+3. Set `sdk.dir` in `local.properties` (see `local.properties.example`).
+4. Sideload the debug APK.
+5. Set Session URL, grant Glass as the default assistant, scan the plugin QR.
+6. Long-press home to open the chat.
 
 ## Layout
 

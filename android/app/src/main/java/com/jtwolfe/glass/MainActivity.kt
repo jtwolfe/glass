@@ -5,7 +5,6 @@ import android.app.AlertDialog
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -28,22 +27,18 @@ import com.jtwolfe.glass.auth.XaiOAuth
 import com.jtwolfe.glass.chat.ChatViewModel
 import com.jtwolfe.glass.chat.SttError
 import com.jtwolfe.glass.chat.TranscribeResult
-import com.jtwolfe.glass.displayText
-import com.jtwolfe.glass.p2p.PairResult
-import com.jtwolfe.glass.pairing.DiscoveryState
-import com.jtwolfe.glass.pairing.LanDiscovery
+import com.jtwolfe.glass.pairing.AgentsResult
+import com.jtwolfe.glass.pairing.HelloResult
 import com.jtwolfe.glass.pairing.PairingInvite
 import com.jtwolfe.glass.pairing.PluginResult
-import com.jtwolfe.glass.rtc.ConnectResult
-import com.jtwolfe.glass.rtc.DataChannelAgentsResult
 import com.jtwolfe.glass.settings.Agent
-import com.jtwolfe.glass.settings.AgentSettings
+import com.jtwolfe.glass.settings.AgentRosterState
 import com.jtwolfe.glass.settings.VoiceSettings
+import com.jtwolfe.glass.settings.WssUrl
 import com.jtwolfe.glass.ui.GlassRoot
 import com.jtwolfe.glass.ui.theme.GlassTheme
 import com.jtwolfe.glass.voice.ListeningState
 import com.jtwolfe.glass.voice.SpeechRecognizerHelper
-import com.jtwolfe.glass.voice.TtsHelper
 import com.jtwolfe.glass.voice.XaiAudioRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -53,14 +48,16 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
 
     private val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(application) { pendingText ->
-            lifecycleScope.launch { attemptReconnect(pendingText) }
+        ChatViewModel.factory(application) { pendingText, force ->
+            attemptReconnect(pendingText, force)
         }
     }
 
@@ -70,20 +67,21 @@ class MainActivity : ComponentActivity() {
     private var pairing by mutableStateOf<PairingInvite?>(null)
     private var xaiLoginLoading by mutableStateOf(false)
     private var selectedVoiceId by mutableStateOf(VoiceSettings.DEFAULT_VOICE)
-    private var availableAgents by mutableStateOf<List<Agent>>(emptyList())
+    private var agentRoster by mutableStateOf(AgentRosterState(emptyList()))
     private var isAssistRecording by mutableStateOf(false)
     private var assistTimeoutJob: Job? = null
     private var currentConnectionState by mutableStateOf(ConnectionState.UNPAIRED)
 
-    private var ttsHelper: TtsHelper? = null
     private var speechHelper: SpeechRecognizerHelper? = null
     private var xaiRecorder: XaiAudioRecorder? = null
-    private var replyPlayer: MediaPlayer? = null
     private var pendingAutoListen = false
 
     private val xaiOAuth = XaiOAuth()
     private var pendingDeviceCode: DeviceCodeResponse? = null
-    private var lanDiscovery: LanDiscovery? = null
+    private var reconnectJob: Job? = null
+    private var pingJob: Job? = null
+    private val reconnectInFlight = AtomicBoolean(false)
+    private val reconnectEpoch = AtomicInteger(0)
 
     private val roleRequest = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -121,7 +119,7 @@ class MainActivity : ComponentActivity() {
                     hasMicPermission = hasMicPermission,
                     xaiLoginLoading = xaiLoginLoading,
                     selectedVoiceId = selectedVoiceId,
-                    availableAgents = availableAgents,
+                    roster = agentRoster,
                     onRequestAssistantRole = ::requestAssistantRole,
                     onOpenAssistantSettings = ::openAssistantSettingsFallback,
                     onRequestMicPermission = ::requestMicPermission,
@@ -133,6 +131,7 @@ class MainActivity : ComponentActivity() {
                     onClearPairing = ::clearPairing,
                     onVoiceSelected = ::selectVoice,
                     onAgentSelected = ::selectAgent,
+                    onRefreshAgents = ::fetchAgents,
                 )
             }
         }
@@ -156,10 +155,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        app.onWebRtcDisconnected = {
-            lifecycleScope.launch {
-                attemptReconnect(null)
-            }
+        app.onReconnectNeeded = { pending ->
+            attemptReconnect(pending)
         }
 
         lifecycleScope.launch {
@@ -177,8 +174,8 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             app.agentSettings.loadCachedAgents()
-            app.agentSettings.availableAgents.collect { agents ->
-                availableAgents = agents
+            app.agentSettings.roster.collect { state ->
+                agentRoster = state
             }
         }
 
@@ -206,66 +203,131 @@ class MainActivity : ComponentActivity() {
 
     private fun fetchAgents() {
         val app = application as GlassApplication
-        val webRtc = app.webRtcConnection ?: return
-
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                webRtc.agents()
+                app.sessionClient.agents()
             }
-            if (result is DataChannelAgentsResult.Success) {
-                val agents = result.agents.map { Agent(it.id, it.name) }
-                app.agentSettings.updateAvailableAgents(agents)
+            when (result) {
+                is AgentsResult.Success -> {
+                    val agents = result.agents.map { Agent(it.id, it.name) }
+                    app.agentSettings.updateAvailableAgents(
+                        agents,
+                        stale = result.stale,
+                        lastAgentId = result.lastAgentId,
+                    )
+                }
+                is AgentsResult.Error ->
+                    app.agentSettings.markAgentsFetchFailed(result.message)
+                AgentsResult.NotConnected ->
+                    app.agentSettings.markAgentsFetchFailed("not_connected")
             }
         }
     }
 
-    private suspend fun attemptReconnect(pendingText: String?) {
+    private fun attemptReconnect(pendingText: String?, force: Boolean = pendingText != null) {
+        if (!force && !reconnectInFlight.compareAndSet(false, true)) return
+        if (force) {
+            reconnectJob?.cancel()
+            reconnectInFlight.set(true)
+        }
+        val epoch = reconnectEpoch.incrementAndGet()
+        reconnectJob = lifecycleScope.launch {
+            try {
+                unifiedReconnect(pendingText)
+            } finally {
+                releaseReconnectFlight(epoch)
+            }
+        }
+    }
+
+    private fun takeReconnectFlight(): Int {
+        reconnectInFlight.set(true)
+        return reconnectEpoch.incrementAndGet()
+    }
+
+    private fun releaseReconnectFlight(epoch: Int) {
+        if (reconnectEpoch.get() == epoch) {
+            reconnectInFlight.set(false)
+        }
+    }
+
+    private suspend fun unifiedReconnect(pendingText: String?) {
         val app = application as GlassApplication
 
         if (!app.pairingStore.isPaired) {
             app.updateConnectionState()
-            chatViewModel.onWebRtcDisconnected()
+            chatViewModel.onSessionDisconnected()
             if (pendingText != null) {
                 chatViewModel.onReconnectFailed()
             }
             return
         }
 
+        if (app.sessionClient.isHelloed) {
+            app.updateConnectionState()
+            chatViewModel.onSessionReady()
+            return
+        }
+
         app.setConnectionState(ConnectionState.RECONNECTING)
         chatViewModel.onReconnecting()
 
-        var attempts = 0
-        val maxAttempts = 3
-
-        while (attempts < maxAttempts) {
-            attempts++
-            delay(2000L * attempts)
-
-            if (!app.pairingStore.isPaired) {
-                break
+        val backoffs = longArrayOf(0L, 2_000L, 4_000L, 6_000L, 8_000L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L)
+        for (attempt in backoffs.indices) {
+            if (!app.pairingStore.isPaired) break
+            if (attempt > 0) delay(backoffs[attempt])
+            if (app.sessionClient.isHelloed) {
+                app.updateConnectionState()
+                chatViewModel.onSessionReady()
+                return
             }
 
-            val webRtc = app.createWebRtcConnectionForReconnect() ?: break
+            val resolved = resolveSessionUrl(null)
+            if (resolved == null) {
+                app.updateConnectionState()
+                chatViewModel.onSessionDisconnected()
+                Toast.makeText(this, "Set session URL in Settings", Toast.LENGTH_LONG).show()
+                if (pendingText != null) {
+                    chatViewModel.onReconnectFailed()
+                }
+                return
+            }
+            val (url, source) = resolved
+            Log.d(TAG, "reconnect attempt=$attempt source=$source")
 
-            val result = withContext(Dispatchers.IO) {
-                webRtc.connect()
+            val open = withContext(Dispatchers.IO) {
+                app.sessionClient.connectSession(url.canonical)
+            }
+            if (open !is PluginResult.Success) {
+                Log.d(TAG, "reconnect attempt=$attempt connect failed")
+                continue
             }
 
-            when (result) {
-                is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
-                    app.setConnectionState(ConnectionState.CONNECTED)
-                    chatViewModel.onWebRtcConnected()
+            val hello = withContext(Dispatchers.IO) {
+                helloPeer(app, app.pairingStore.currentInvite?.pub)
+            }
+            when (hello) {
+                is HelloResult.Success -> {
+                    persistHello(hello)
+                    app.pairingStore.saveLastWssUrl(url.canonical)
+                    app.updateConnectionState()
+                    chatViewModel.onSessionReady()
                     fetchAgents()
                     return
                 }
+                is HelloResult.Unpaired, is HelloResult.WrongPeer -> {
+                    wipeForRescan()
+                    return
+                }
                 else -> {
-                    app.closeWebRtcConnection()
+                    Log.d(TAG, "reconnect attempt=$attempt hello failed")
+                    app.sessionClient.disconnect()
                 }
             }
         }
 
         app.updateConnectionState()
-        chatViewModel.onWebRtcDisconnected()
+        chatViewModel.onSessionDisconnected()
         if (pendingText != null) {
             chatViewModel.onReconnectFailed()
         }
@@ -393,131 +455,124 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun savePairing(invite: PairingInvite) {
-        lifecycleScope.launch {
+        reconnectJob?.cancel()
+        val epoch = takeReconnectFlight()
+        reconnectJob = lifecycleScope.launch {
             val app = application as GlassApplication
+            try {
 
-            // Save the invite (first-pair only)
+            val previousPeer = app.pairingStore.pluginPeer
+            if (previousPeer != invite.peer) {
+                chatViewModel.clearLocal()
+                app.pairingStore.clearWatermark()
+            }
+
             app.pairingStore.saveInvite(invite)
             pairing = invite
 
-            if (invite.isV1) {
-                // v1: Use ntfy for WebRTC signaling (not LAN discovery)
-                // First-pair topic = SHA-256("glass-pair/v1\n" + peer + "\n" + pub + "\n" + code)
-                // Chat NEVER goes to ntfy - only WebRTC offer/answer/ICE
+            if (!invite.isV1) {
                 Toast.makeText(
                     this@MainActivity,
-                    "Connecting...",
+                    "Scan a v1 plugin QR to pair",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@launch
+            }
+
+            val resolved = resolveSessionUrl(invite.wssHint)
+            if (resolved == null) {
+                app.updateConnectionState()
+                Toast.makeText(
+                    this@MainActivity,
+                    "Set session URL in Settings",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@launch
+            }
+            val (url, source) = resolved
+            Log.d(TAG, "pair url source=$source")
+            if (source == "settings" && !invite.wssHint.isNullOrBlank() &&
+                invite.wssHint != url.canonical
+            ) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "plugin suggested ${invite.wssHint} (not used — Settings override)",
                     Toast.LENGTH_SHORT,
                 ).show()
+            }
 
-                val webRtc = app.createWebRtcConnectionForFirstPair(invite)
-                if (webRtc == null) {
+            app.setConnectionState(ConnectionState.RECONNECTING)
+            Toast.makeText(this@MainActivity, "Connecting...", Toast.LENGTH_SHORT).show()
+
+            val pairResult = withContext(Dispatchers.IO) {
+                app.sessionClient.connectAndPair(url.canonical, invite.code)
+            }
+            when (pairResult) {
+                is PluginResult.Timeout -> {
+                    app.updateConnectionState()
+                    Toast.makeText(this@MainActivity, "Connection timed out", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                is PluginResult.Rejected -> {
+                    app.updateConnectionState()
                     Toast.makeText(
                         this@MainActivity,
-                        "Invalid v1 invite: missing pub field",
+                        "Pairing rejected",
                         Toast.LENGTH_LONG,
                     ).show()
                     return@launch
                 }
-
-                val connectResult = withContext(Dispatchers.IO) {
-                    webRtc.connect()
-                }
-
-                when (connectResult) {
-                    is ConnectResult.Success, is ConnectResult.AlreadyConnected -> {
-                        // Send hello to establish stable topic for reconnects
-                        val phonePeer = app.pairingStore.phonePeer
-                        val pluginPeer = invite.peer
-                        val helloSent = withContext(Dispatchers.IO) {
-                            webRtc.sendHello(phonePeer)
-                        }
-                        if (helloSent) {
-                            app.pairingStore.markPaired(pluginPeer)
-                        }
-
-                        app.setConnectionState(ConnectionState.CONNECTED)
-                        chatViewModel.onWebRtcConnected()
-                        fetchAgents()
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Paired",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                    is ConnectResult.Timeout -> {
-                        app.closeWebRtcConnection()
-                        app.updateConnectionState()
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Connection timed out — tap to retry",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                    is ConnectResult.Error -> {
-                        app.closeWebRtcConnection()
-                        app.updateConnectionState()
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Connection failed: ${connectResult.message}",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                }
-            } else {
-                // v0 (legacy): PSK-based P2P dial
-                val psk = invite.psk
-                if (psk != null && invite.addrs.isNotEmpty()) {
+                is PluginResult.Error -> {
+                    app.updateConnectionState()
                     Toast.makeText(
                         this@MainActivity,
-                        "Connecting to inbox P2P...",
-                        Toast.LENGTH_SHORT,
+                        "Connection failed: ${pairResult.message}",
+                        Toast.LENGTH_LONG,
                     ).show()
+                    return@launch
+                }
+                PluginResult.Success -> Unit
+            }
 
-                    val streamClient = app.inboxStreamClient
-                    withContext(Dispatchers.IO) {
-                        streamClient.start()
-                    }
-
-                    val result = withContext(Dispatchers.IO) {
-                        streamClient.dialAndPair(
-                            peerId = invite.peer,
-                            addrs = invite.addrs,
-                            psk = psk,
-                            exp = invite.exp,
-                        )
-                    }
-
-                    when (result) {
-                        is PairResult.Success -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Paired with inbox (P2P connected)",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        is PairResult.Expired -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Invite expired. Please scan a new QR code.",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                        is PairResult.Error -> {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Paired (HTTPS fallback): ${result.message}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    }
-                } else {
+            val hello = withContext(Dispatchers.IO) {
+                helloPeer(app, invite.pub)
+            }
+            when (hello) {
+                is HelloResult.Success -> {
+                    persistHello(hello)
+                    app.pairingStore.markPaired(invite.peer)
+                    app.pairingStore.saveLastWssUrl(url.canonical)
+                    app.updateConnectionState()
+                    chatViewModel.onSessionReady()
+                    fetchAgents()
+                    Toast.makeText(this@MainActivity, "Paired", Toast.LENGTH_SHORT).show()
+                }
+                is HelloResult.Unpaired, is HelloResult.WrongPeer -> {
+                    wipeForRescan()
+                }
+                is HelloResult.Timeout -> {
+                    app.updateConnectionState()
+                    Toast.makeText(this@MainActivity, "Connection timed out", Toast.LENGTH_LONG).show()
+                }
+                is HelloResult.Rejected -> {
+                    app.updateConnectionState()
+                    Toast.makeText(this@MainActivity, "Pairing rejected", Toast.LENGTH_LONG).show()
+                }
+                is HelloResult.Error -> {
+                    app.updateConnectionState()
                     Toast.makeText(
                         this@MainActivity,
-                        "Paired with inbox (HTTPS fallback)",
-                        Toast.LENGTH_SHORT,
+                        "Connection failed: ${hello.message}",
+                        Toast.LENGTH_LONG,
                     ).show()
                 }
+                HelloResult.NotConnected -> {
+                    app.updateConnectionState()
+                    Toast.makeText(this@MainActivity, "Connection failed", Toast.LENGTH_LONG).show()
+                }
+            }
+            } finally {
+                releaseReconnectFlight(epoch)
             }
         }
     }
@@ -525,20 +580,64 @@ class MainActivity : ComponentActivity() {
     private fun clearPairing() {
         lifecycleScope.launch {
             val app = application as GlassApplication
+            chatViewModel.clearLocal()
             app.pairingStore.clear()
-            app.closeWebRtcConnection()
-            app.pluginClient.disconnect()
-            chatViewModel.onWebRtcDisconnected()
-            chatViewModel.onPluginDisconnected()
-            lanDiscovery?.reset()
-            lanDiscovery = null
+            app.sessionClient.disconnect()
+            app.updateConnectionState()
+            chatViewModel.onSessionDisconnected()
             pairing = null
             Toast.makeText(this@MainActivity, "Unpaired", Toast.LENGTH_SHORT).show()
         }
     }
 
+    private suspend fun resolveSessionUrl(qrHint: String?): Pair<WssUrl, String>? {
+        val app = application as GlassApplication
+        val settingsRaw = app.wssSettings.current()
+        if (settingsRaw.isNotBlank()) {
+            val parsed = WssUrl.parse(settingsRaw) ?: return null
+            return parsed to "settings"
+        }
+        if (!qrHint.isNullOrBlank()) {
+            val parsed = WssUrl.parse(qrHint)
+            if (parsed != null) {
+                app.wssSettings.save(parsed.canonical)
+                return parsed to "qr_hint"
+            }
+        }
+        val last = app.pairingStore.lastWssUrl
+        if (!last.isNullOrBlank()) {
+            val parsed = WssUrl.parse(last)
+            if (parsed != null) return parsed to "last"
+        }
+        return null
+    }
+
+    private suspend fun helloPeer(app: GlassApplication, pub: String?): HelloResult {
+        return app.sessionClient.hello(
+            phonePeer = app.pairingStore.phonePeer,
+            pub = pub,
+            lastSeenSeq = app.pairingStore.lastSeenSeq,
+            sessionId = app.pairingStore.sessionId,
+        )
+    }
+
+    private suspend fun persistHello(hello: HelloResult.Success) {
+        val app = application as GlassApplication
+        app.pairingStore.persistHelloSession(hello.sessionId, hello.seq)
+    }
+
+    private suspend fun wipeForRescan() {
+        val app = application as GlassApplication
+        chatViewModel.clearLocal()
+        app.pairingStore.clear()
+        app.sessionClient.disconnect()
+        app.updateConnectionState()
+        chatViewModel.onSessionDisconnected()
+        pairing = null
+        Toast.makeText(this, "Scan the QR again", Toast.LENGTH_LONG).show()
+    }
+
     private fun initializeVoice() {
-        ttsHelper = TtsHelper(this)
         speechHelper = SpeechRecognizerHelper(this) { transcript ->
             chatViewModel.onVoiceTranscript(transcript)
         }
@@ -554,64 +653,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }?.launchIn(lifecycleScope)
-
-        chatViewModel.newAssistantMessages.onEach { message ->
-            val id = message.id
-
-            // Try xAI TTS first when logged in
-            val xaiAudio = withContext(Dispatchers.IO) {
-                chatViewModel.synthesizeXaiTts(message.text)
-            }
-            if (xaiAudio != null && xaiAudio.isNotEmpty()) {
-                playReplyMpeg(xaiAudio)
-                return@onEach
-            }
-
-            // Fall back to inbox audio endpoint
-            val inboxMpeg = if (!id.isNullOrBlank()) {
-                withContext(Dispatchers.IO) { chatViewModel.fetchReplyAudio(id) }
-            } else {
-                null
-            }
-            if (inboxMpeg != null && inboxMpeg.isNotEmpty()) {
-                playReplyMpeg(inboxMpeg)
-                return@onEach
-            }
-
-            // Final fallback: on-device TTS
-            ttsHelper?.speak(message.text)
-        }.launchIn(lifecycleScope)
     }
 
-    private fun playReplyMpeg(bytes: ByteArray) {
-        stopReplyAudio()
-        ttsHelper?.stop()
-        val file = File(cacheDir, "ashleigh-reply.mp3")
-        file.writeBytes(bytes)
-        replyPlayer = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            setOnCompletionListener { stopReplyAudio() }
-            setOnErrorListener { _, _, _ ->
-                stopReplyAudio()
-                true
-            }
-            prepare()
-            start()
-        }
-    }
-
-    private fun stopReplyAudio() {
-        replyPlayer?.apply {
-            runCatching { stop() }
-            release()
-        }
-        replyPlayer = null
+    private fun stopReplySpeech() {
+        (application as GlassApplication).replySpeechQueue.stopAndClear()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        chatViewModel.onAssistOpened()
         handleAssistIntent(intent)
     }
 
@@ -619,28 +669,32 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshAssistantRole()
         refreshMicPermission()
-        chatViewModel.refresh()
         if (pendingAutoListen && hasMicPermission) {
             pendingAutoListen = false
             startListening()
+        }
+        startPing()
+        val app = application as GlassApplication
+        if (app.pairingStore.isPaired && !app.sessionClient.isHelloed) {
+            attemptReconnect(null)
         }
     }
 
     override fun onPause() {
         super.onPause()
+        pingJob?.cancel()
+        pingJob = null
         speechHelper?.reset()
         if (!isAssistRecording) {
             xaiRecorder?.cancel()
         }
-        stopReplyAudio()
+        stopReplySpeech()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         speechHelper?.reset()
         xaiRecorder?.cancel()
-        stopReplyAudio()
-        ttsHelper?.shutdown()
     }
 
     private fun handleAssistIntent(intent: Intent?) {
@@ -683,8 +737,7 @@ class MainActivity : ComponentActivity() {
             requestMicPermission()
             return
         }
-        stopReplyAudio()
-        ttsHelper?.stop()
+        stopReplySpeech()
         assistTimeoutJob?.cancel()
         isAssistRecording = false
 
@@ -706,8 +759,7 @@ class MainActivity : ComponentActivity() {
             requestMicPermission()
             return
         }
-        stopReplyAudio()
-        ttsHelper?.stop()
+        stopReplySpeech()
         assistTimeoutJob?.cancel()
 
         val app = application as GlassApplication
@@ -782,8 +834,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun startPing() {
+        pingJob?.cancel()
+        pingJob = lifecycleScope.launch {
+            val app = application as GlassApplication
+            while (isActive) {
+                delay(PING_INTERVAL_MS)
+                if (!app.sessionClient.isHelloed) continue
+                val ok = withContext(Dispatchers.IO) { app.sessionClient.ping() }
+                if (!ok) {
+                    app.sessionClient.disconnect()
+                    app.updateConnectionState()
+                    attemptReconnect(null)
+                }
+            }
+        }
+    }
+
     companion object {
+        private const val TAG = "MainActivity"
         private const val ASSIST_TIMEOUT_MS = 10_000L
+        private const val PING_INTERVAL_MS = 30_000L
     }
 
     private fun refreshAssistantRole() {

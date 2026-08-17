@@ -5,4 +5,6 @@
 ignore = [
     # BLE001: Blind exception catches are intentional for network resilience
     "BLE001",
+    # S110: close/send on a dead socket has nothing useful to log
+    "S110",
 ]

@@ -23,7 +23,6 @@ import java.util.Base64
  * Tokens are stored in EncryptedSharedPreferences on the device and NEVER:
  * - Committed to git
  * - Logged
- * - Sent to the inbox public URL or Quay's tunnel
  *
  * The xAI bearer is used only for direct calls to api.x.ai (STT/TTS).
  */

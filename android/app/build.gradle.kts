@@ -1,22 +1,8 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
-
-val localProperties = Properties()
-val localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.inputStream().use { localProperties.load(it) }
-}
-
-fun escapeBuildConfig(value: String): String =
-    value.replace("\\", "\\\\").replace("\"", "\\\"")
-
-val inboxUrl = escapeBuildConfig(localProperties.getProperty("glass.inbox.url", "") ?: "")
-val inboxToken = escapeBuildConfig(localProperties.getProperty("glass.inbox.token", "") ?: "")
 
 android {
     namespace = "com.jtwolfe.glass"
@@ -28,9 +14,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-
-        buildConfigField("String", "INBOX_URL", "\"$inboxUrl\"")
-        buildConfigField("String", "INBOX_TOKEN", "\"$inboxToken\"")
     }
 
     buildTypes {
@@ -54,7 +37,10 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     packaging {
@@ -96,11 +82,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Encrypted storage for xAI OAuth tokens and pairing PSK
+    // Encrypted storage for xAI OAuth tokens and pairing identity
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Chrome Custom Tabs for xAI OAuth browser flow
@@ -113,12 +100,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.0")
     implementation("androidx.camera:camera-view:1.4.0")
 
-    // libp2p for P2P transport (Quay: /glass/inbox/v0 after pair)
-    implementation("io.libp2p:jvm-libp2p:1.3.5-RELEASE")
-
-    // Guava (needed by jvm-libp2p and CameraX - use Android variant)
+    // Guava (CameraX Android variant)
     implementation("com.google.guava:guava:33.3.1-android")
 
-    // WebRTC for ntfy-based DataChannel pairing
-    implementation("io.getstream:stream-webrtc-android:1.3.7")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

@@ -1,4 +1,2 @@
-## Copy to local.properties (gitignored). Inbox credentials stay off git.
+## Copy to local.properties (gitignored).
 sdk.dir=/path/to/Android/sdk
-glass.inbox.url=https://inbox.example.invalid
-glass.inbox.token=

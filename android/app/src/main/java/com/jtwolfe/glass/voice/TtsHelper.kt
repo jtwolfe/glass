@@ -19,11 +19,14 @@ enum class TtsState {
 class TtsHelper(
     context: Context,
     private val onReady: () -> Unit = {},
-    private val onDone: () -> Unit = {},
+    onDone: () -> Unit = {},
 ) : TextToSpeech.OnInitListener {
 
     private val tts: TextToSpeech = TextToSpeech(context, this)
     private val utteranceCounter = AtomicInteger(0)
+
+    @Volatile
+    var onDone: () -> Unit = onDone
 
     private val _state = MutableStateFlow(TtsState.INITIALIZING)
     val state: StateFlow<TtsState> = _state.asStateFlow()
@@ -39,22 +42,26 @@ class TtsHelper(
             }
 
             override fun onDone(utteranceId: String?) {
-                _isSpeaking.value = false
-                _state.value = TtsState.READY
-                onDone()
+                terminal()
             }
 
             @Deprecated("Deprecated in API level 21")
             override fun onError(utteranceId: String?) {
-                _isSpeaking.value = false
-                _state.value = TtsState.ERROR
+                terminal()
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                _isSpeaking.value = false
-                _state.value = TtsState.ERROR
+                terminal()
             }
         })
+    }
+
+    private fun terminal() {
+        _isSpeaking.value = false
+        if (_state.value != TtsState.INITIALIZING) {
+            _state.value = TtsState.READY
+        }
+        onDone()
     }
 
     override fun onInit(status: Int) {
@@ -73,10 +80,14 @@ class TtsHelper(
         }
     }
 
-    fun speak(text: String) {
-        if (_state.value != TtsState.READY && _state.value != TtsState.SPEAKING) return
+    fun speak(text: String): Boolean {
+        if (_state.value != TtsState.READY && _state.value != TtsState.SPEAKING) {
+            return false
+        }
         val utteranceId = "ashleigh_${utteranceCounter.incrementAndGet()}"
-        tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        val result = tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        // ERROR does not invoke the progress listener; caller must finish the job.
+        return result == TextToSpeech.SUCCESS
     }
 
     fun stop() {

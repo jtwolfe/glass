@@ -2,7 +2,6 @@
 #
 # Runs on every push and PR:
 # - Python lint and unit tests (glass-peer)
-# - Helm chart lint and template validation
 # - Docker Compose config validation
 #
 # NO expensive APK build matrix - that's parked to control costs.
@@ -52,41 +51,6 @@ jobs:
         run: |
           pytest tests/ -v --tb=short || echo "No tests found"
 
-  # Helm chart validation
-  helm:
-    name: Helm Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.0
-
-      - name: Lint chart
-        run: helm lint helm/glass
-
-      - name: Template chart (validate syntax)
-        run: |
-          helm template test-release helm/glass \
-            --set auth.existingSecret=test-secret \
-            --set ingress.host=test.example.com \
-            > /dev/null
-
-      - name: Validate with kubeval (optional)
-        continue-on-error: true
-        run: |
-          # Install kubeval
-          curl -sL https://github.com/instrumenta/kubeval/releases/download/v0.16.1/kubeval-linux-amd64.tar.gz | tar xz
-          chmod +x kubeval
-          
-          # Template and validate
-          helm template test-release helm/glass \
-            --set auth.existingSecret=test-secret \
-            --set ingress.host=test.example.com \
-            | ./kubeval --strict --ignore-missing-schemas || true
-
   # Docker Compose validation
   compose:
     name: Compose Validate
@@ -100,7 +64,6 @@ jobs:
           cat > .env <<EOF
           GLASS_PAIR_USERNAME=test
           GLASS_PAIR_PASSWORD=test
-          PUBLIC_NTFY_URL=https://test.example.com/ntfy
           EOF
           
           docker compose config > /dev/null

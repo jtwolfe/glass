@@ -1,14 +1,12 @@
-"""Tests for invite minting and topic computation."""
-
+"""Tests for invite minting."""
 
 import sys
 
-sys.path.insert(0, '..')
+sys.path.insert(0, "..")
 
 from mint import (
+    PHONE_CROCKFORD_8_REGEX,
     base32_encode,
-    compute_stable_topic,
-    compute_topic,
     crockford_encode,
     mint_invite,
 )
@@ -33,7 +31,7 @@ def test_crockford_encode_5_bytes():
 def test_mint_invite_fields():
     """Minted invite should have all required fields."""
     invite = mint_invite(ttl_seconds=60)
-    
+
     assert invite.version == 1
     assert len(invite.peer) == 52
     assert len(invite.pub) == 64
@@ -47,41 +45,38 @@ def test_mint_invite_not_expired():
     assert not invite.is_expired
 
 
-def test_compute_topic_deterministic():
-    """Topic computation should be deterministic."""
-    peer = "a" * 52
-    pub = "b" * 64
-    code = "ABCD1234"
-    
-    topic1 = compute_topic(peer, pub, code)
-    topic2 = compute_topic(peer, pub, code)
-    
-    assert topic1 == topic2
-    assert len(topic1) == 64
-
-
-def test_compute_stable_topic():
-    """Stable topic should be computed from plugin and phone peers."""
-    plugin_peer = "a" * 52
-    phone_peer = "b" * 52
-    
-    topic = compute_stable_topic(plugin_peer, phone_peer)
-    
-    assert len(topic) == 64
-    # Different from invite topic
-    assert topic != compute_topic(plugin_peer, "c" * 64, "ABCD1234")
-
-
 def test_qr_json_format():
     """QR JSON should have correct format."""
     invite = mint_invite()
     qr = invite.to_qr_json()
-    
+
     assert qr["v"] == 1
     assert "peer" in qr
     assert "pub" in qr
     assert "code" in qr
     assert "exp" in qr
-    # No host or IP in QR
+    # No host or IP in QR; wss only when configured
     assert "host" not in qr
     assert "url" not in qr
+    assert "wss" not in qr
+
+
+def test_qr_json_optional_wss():
+    invite = mint_invite()
+    qr = invite.to_qr_json(wss="wss://chat.example.com/session")
+    assert qr["wss"] == "wss://chat.example.com/session"
+    assert "host" not in qr
+    assert "url" not in qr
+
+
+def test_mint_code_matches_phone_crockford():
+    """Every minted code must survive the phone Crockford regex (0/1 allowed)."""
+    assert PHONE_CROCKFORD_8_REGEX.match("F41XS71T")
+    assert PHONE_CROCKFORD_8_REGEX.match("01ABCDEF")
+    assert not PHONE_CROCKFORD_8_REGEX.match("I2345678")
+    assert not PHONE_CROCKFORD_8_REGEX.match("L2345678")
+    assert not PHONE_CROCKFORD_8_REGEX.match("O2345678")
+    assert not PHONE_CROCKFORD_8_REGEX.match("U2345678")
+    for _ in range(1000):
+        invite = mint_invite()
+        assert PHONE_CROCKFORD_8_REGEX.match(invite.code)

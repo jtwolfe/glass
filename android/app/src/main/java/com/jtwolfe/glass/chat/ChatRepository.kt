@@ -1,170 +1,224 @@
 package com.jtwolfe.glass.chat
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.jtwolfe.glass.inbox.InboxClient
-import com.jtwolfe.glass.inbox.InboxConfig
 import com.jtwolfe.glass.inbox.V0Message
-import com.jtwolfe.glass.p2p.InboxStreamClient
-import com.jtwolfe.glass.p2p.StreamResponse
-import com.jtwolfe.glass.pairing.PluginClient
-import com.jtwolfe.glass.pairing.RepliesResult
+import com.jtwolfe.glass.pairing.PairingStore
+import com.jtwolfe.glass.pairing.PluginMessage
 import com.jtwolfe.glass.pairing.SendResult
-import com.jtwolfe.glass.rtc.DataChannelRepliesResult
-import com.jtwolfe.glass.rtc.DataChannelSendResult
-import com.jtwolfe.glass.rtc.WebRtcPeerConnection
+import com.jtwolfe.glass.pairing.SessionClient
+import com.jtwolfe.glass.pairing.SessionError
+import com.jtwolfe.glass.voice.ReplySpeechQueue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import org.json.JSONObject
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val Context.localChatStore by preferencesDataStore(name = "glass_local_chat")
 
+interface ChatPersist {
+    suspend fun load(): List<V0Message>
+    suspend fun save(messages: List<V0Message>)
+}
+
+interface ChatWatermarks {
+    val sessionId: String?
+    val lastSpokenSeq: Long
+    suspend fun persistLastSeen(sessionId: String, seq: Long)
+    suspend fun clear()
+}
+
+/**
+ * Sole mutator of the local chat thread. Application-scoped.
+ * ViewModels collect [messages] / [agentError] and must not persist their own list.
+ */
 class ChatRepository(
-    private val context: Context,
-    private val client: InboxClient = InboxClient(),
-    private val streamClient: InboxStreamClient? = null,
-    private val pluginClient: PluginClient? = null,
-    private val webRtcConnectionProvider: (() -> WebRtcPeerConnection?)? = null,
+    private val sessionClient: SessionClient? = null,
+    private val persist: ChatPersist,
+    private val watermarks: ChatWatermarks,
+    private val offerSpeech: (text: String, seq: Long, sessionId: String) -> Unit = { _, _, _ -> },
+    private val isForeground: () -> Boolean = { false },
+    hydrateScope: CoroutineScope? = null,
 ) {
-    private val messagesKey = stringPreferencesKey("messages_json")
+    constructor(
+        context: Context,
+        sessionClient: SessionClient? = null,
+        pairingStore: PairingStore,
+        speechQueue: ReplySpeechQueue,
+        isForeground: () -> Boolean,
+        hydrateScope: CoroutineScope,
+    ) : this(
+        sessionClient = sessionClient,
+        persist = DataStoreChatPersist(context.applicationContext),
+        watermarks = PairingChatWatermarks(pairingStore),
+        offerSpeech = { text, seq, sid -> speechQueue.offer(text, seq, sid) },
+        isForeground = isForeground,
+        hydrateScope = hydrateScope,
+    )
 
-    suspend fun loadLocal(): List<V0Message> {
-        val raw = context.localChatStore.data.map { it[messagesKey].orEmpty() }.first()
-        return runCatching { V0Message.listFromJson(raw) }.getOrDefault(emptyList())
+    private val mutex = Mutex()
+    private var hydrated = false
+
+    private val _messages = MutableStateFlow<List<V0Message>>(emptyList())
+    val messages: StateFlow<List<V0Message>> = _messages.asStateFlow()
+
+    private val _agentError = MutableStateFlow<SessionError?>(null)
+    val agentError: StateFlow<SessionError?> = _agentError.asStateFlow()
+
+    init {
+        hydrateScope?.launch { hydrate() }
     }
 
-    suspend fun saveLocal(messages: List<V0Message>) {
-        context.localChatStore.edit { it[messagesKey] = V0Message.listToJson(messages) }
+    suspend fun hydrate() {
+        mutex.withLock { ensureHydratedLocked() }
     }
 
-    suspend fun pullReplies(config: InboxConfig, after: String): List<V0Message> {
-        // v1 WebRTC: Use DataChannel when connected (chat never goes to ntfy)
-        val webRtc = webRtcConnectionProvider?.invoke()
-        if (webRtc != null && webRtc.isConnected) {
-            val token = config.token.takeIf { it.isNotBlank() }
-            val result = webRtc.replies(after = after, limit = 50, token = token)
-            if (result is DataChannelRepliesResult.Success) {
-                return result.messages
-                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
-                    .map { msg ->
-                        V0Message(
-                            id = msg.id.takeIf { it.isNotBlank() },
-                            from = msg.from,
-                            text = msg.text,
-                            at = msg.at,
-                        )
-                    }
-            }
+    suspend fun appendOutgoing(msg: V0Message) {
+        mutex.withLock {
+            ensureHydratedLocked()
+            val next = _messages.value + msg
+            _messages.value = next
+            persist.save(next)
         }
-
-        // v1 LAN (parked): Use PluginClient TCP socket when paired
-        val plugin = pluginClient
-        if (plugin != null && plugin.isConnected && plugin.isPaired) {
-            val token = config.token.takeIf { it.isNotBlank() }
-            val result = plugin.replies(after = after, limit = 50, token = token)
-            if (result is RepliesResult.Success) {
-                return result.messages
-                    .filter { it.from.equals("ashleigh", ignoreCase = true) }
-                    .map { msg ->
-                        V0Message(
-                            id = msg.id.takeIf { it.isNotBlank() },
-                            from = msg.from,
-                            text = msg.text,
-                            at = msg.at,
-                        )
-                    }
-            }
-        }
-
-        // v0: Use P2P stream if connected
-        val stream = streamClient
-        if (stream != null && stream.isConnected && stream.isPaired) {
-            val response = stream.getReplies(config.token, after)
-            if (response is StreamResponse.Success && response.status in 200..299) {
-                return V0Message.listFromEnvelope(response.body)
-            }
-        }
-
-        // Fallback: HTTPS inbox only if URL is actually configured
-        if (config.isHttpConfigured) {
-            return client.fetchReplies(config, after)
-        }
-
-        return emptyList()
     }
 
-    suspend fun sendRemote(config: InboxConfig, message: V0Message, agentId: String? = null): V0Message {
-        // v1 WebRTC: Use DataChannel when connected (from=jamie only, chat never goes to ntfy)
-        val webRtc = webRtcConnectionProvider?.invoke()
-        if (webRtc != null && webRtc.isConnected) {
-            val token = config.token.takeIf { it.isNotBlank() }
-            val result = webRtc.send(
-                from = "jamie",
-                text = message.text,
-                at = message.at,
-                agentId = agentId,
-                token = token,
-            )
-            if (result is DataChannelSendResult.Success) {
-                return V0Message(
-                    id = result.id.takeIf { it.isNotBlank() },
-                    from = result.from,
-                    text = result.text,
-                    at = result.at,
-                )
+    suspend fun acceptReply(msg: PluginMessage) {
+        val sessionId = sessionClient?.lastHelloSessionId?.takeIf { it.isNotBlank() }
+            ?: msg.sessionId
+        val v0 = V0Message(
+            id = msg.id,
+            from = msg.from,
+            text = msg.text,
+            at = msg.at,
+            seq = msg.seq,
+            sessionId = sessionId,
+        )
+        val inserted = mutex.withLock {
+            ensureHydratedLocked()
+            val next = insertOrDedupeReply(_messages.value, v0) ?: return@withLock false
+            _messages.value = next
+            if (sessionId.isNotBlank()) {
+                watermarks.persistLastSeen(sessionId, msg.seq)
             }
+            persist.save(next)
+            true
         }
+        if (!inserted) return
 
-        // v1 LAN (parked): Use PluginClient TCP socket when paired
-        val plugin = pluginClient
-        if (plugin != null && plugin.isConnected && plugin.isPaired) {
-            val token = config.token.takeIf { it.isNotBlank() }
-            val result = plugin.send(
-                from = "jamie",
-                text = message.text,
-                at = message.at,
-                token = token,
-            )
-            if (result is SendResult.Success) {
-                return V0Message(
-                    id = result.id.takeIf { it.isNotBlank() },
-                    from = result.from,
-                    text = result.text,
-                    at = result.at,
-                )
-            }
+        val currentSid = sessionClient?.lastHelloSessionId ?: watermarks.sessionId
+        val lastSpoken = if (watermarks.sessionId == currentSid) {
+            watermarks.lastSpokenSeq
+        } else {
+            PairingStore.DEFAULT_LAST_SPOKEN_SEQ
         }
-
-        // v0: Use P2P stream if connected
-        val stream = streamClient
-        if (stream != null && stream.isConnected && stream.isPaired) {
-            val response = stream.postMessage(
-                token = config.token,
-                from = message.from,
-                text = message.text,
-                at = message.at,
-            )
-            if (response is StreamResponse.Success && response.status in 200..299) {
-                return runCatching {
-                    val json = JSONObject(response.body)
-                    V0Message.fromJson(json) ?: message
-                }.getOrDefault(message)
-            }
+        val live = msg.live && !msg.catchUp
+        val speak = Watermark.shouldSpeak(
+            seq = v0.seq,
+            sessionId = sessionId,
+            currentSessionId = currentSid,
+            lastSpokenSeq = lastSpoken,
+            live = live,
+            foreground = isForeground(),
+        )
+        Log.d(TAG, "onReply seq=${msg.seq} live=${msg.live} catchUp=${msg.catchUp} speak=$speak")
+        if (speak && sessionId.isNotBlank() && isForeground()) {
+            offerSpeech(msg.text, msg.seq, sessionId)
         }
-
-        // Fallback: HTTPS inbox only if URL is actually configured
-        if (config.isHttpConfigured) {
-            return client.postMessage(config, message)
-        }
-
-        return message
     }
 
-    suspend fun transcribe(config: InboxConfig, audio: ByteArray): String? =
-        client.transcribe(config, audio)
+    suspend fun clear() {
+        mutex.withLock {
+            hydrated = true
+            _messages.value = emptyList()
+            persist.save(emptyList())
+            watermarks.clear()
+            _agentError.value = null
+        }
+    }
 
-    suspend fun fetchReplyAudio(config: InboxConfig, id: String): ByteArray? =
-        client.fetchReplyAudio(config, id)
+    suspend fun setAgentError(err: SessionError?) {
+        _agentError.value = err
+    }
+
+    suspend fun dismissAgentError() {
+        _agentError.value = null
+    }
+
+    suspend fun sendRemote(message: V0Message, agentId: String? = null): SendResult {
+        val session = sessionClient ?: return SendResult.NotConnected
+        if (!session.isHelloed) return SendResult.NotConnected
+        return session.send(
+            from = V0Message.FROM_JAMIE,
+            text = message.text,
+            at = message.at,
+            agentId = agentId,
+        )
+    }
+
+    private suspend fun ensureHydratedLocked() {
+        if (hydrated) return
+        _messages.value = persist.load()
+        hydrated = true
+    }
+
+    private class DataStoreChatPersist(private val context: Context) : ChatPersist {
+        private val messagesKey = stringPreferencesKey("messages_json")
+
+        override suspend fun load(): List<V0Message> {
+            val raw = context.localChatStore.data.map { it[messagesKey].orEmpty() }.first()
+            return runCatching { V0Message.listFromJson(raw) }.getOrDefault(emptyList())
+        }
+
+        override suspend fun save(messages: List<V0Message>) {
+            context.localChatStore.edit { it[messagesKey] = V0Message.listToJson(messages) }
+        }
+    }
+
+    private class PairingChatWatermarks(
+        private val store: PairingStore,
+    ) : ChatWatermarks {
+        override val sessionId: String? get() = store.sessionId
+        override val lastSpokenSeq: Long get() = store.lastSpokenSeq
+        override suspend fun persistLastSeen(sessionId: String, seq: Long) {
+            store.persistLastSeen(sessionId, seq)
+        }
+        override suspend fun clear() {
+            store.clearWatermark()
+        }
+    }
+
+    companion object {
+        private const val TAG = "ChatRepository"
+    }
+}
+
+/** Insert in seq order among the same sessionId. Null if (sessionId, seq) already exists. */
+internal fun insertOrDedupeReply(
+    messages: List<V0Message>,
+    incoming: V0Message,
+): List<V0Message>? {
+    val sid = incoming.sessionId
+    val seq = incoming.seq
+    if (sid.isNullOrBlank() || seq == null) {
+        return messages + incoming
+    }
+    if (messages.any { it.sessionId == sid && it.seq == seq }) {
+        return null
+    }
+    val insertAt = messages.indexOfFirst { row ->
+        row.sessionId == sid && row.seq != null && row.seq > seq
+    }
+    return if (insertAt < 0) {
+        messages + incoming
+    } else {
+        messages.toMutableList().apply { add(insertAt, incoming) }
+    }
 }

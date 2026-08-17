@@ -1,6 +1,8 @@
 package com.jtwolfe.glass.settings
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -31,16 +33,25 @@ data class Agent(
     }
 }
 
-class AgentSettings(private val context: Context) {
+data class AgentRosterState(
+    val agents: List<Agent>,
+    val stale: Boolean = false,
+    val lastError: String? = null, // null = last fetch ok (possibly empty)
+)
+
+class AgentSettings(private val store: DataStore<Preferences>) {
+
+    constructor(context: Context) : this(context.agentStore)
 
     private val selectedAgentIdKey = stringPreferencesKey("selected_agent_id")
     private val selectedAgentNameKey = stringPreferencesKey("selected_agent_name")
     private val cachedAgentsKey = stringPreferencesKey("cached_agents_json")
 
-    private val _availableAgents = MutableStateFlow<List<Agent>>(emptyList())
-    val availableAgents = _availableAgents.asStateFlow()
+    private val _roster = MutableStateFlow(AgentRosterState(emptyList()))
+    val roster = _roster.asStateFlow()
+    val availableAgents: List<Agent> get() = _roster.value.agents
 
-    val selectedAgent: Flow<Agent> = context.agentStore.data.map { prefs ->
+    val selectedAgent: Flow<Agent> = store.data.map { prefs ->
         val id = prefs[selectedAgentIdKey]
         val name = prefs[selectedAgentNameKey]
         if (!id.isNullOrBlank() && !name.isNullOrBlank()) {
@@ -51,50 +62,59 @@ class AgentSettings(private val context: Context) {
     }
 
     suspend fun getSelectedAgentId(): String? {
-        return context.agentStore.data.map { prefs ->
+        return store.data.map { prefs ->
             prefs[selectedAgentIdKey]?.takeIf { it.isNotBlank() }
         }.first()
     }
 
     suspend fun setSelectedAgent(agent: Agent) {
         if (agent.id.isBlank()) return
-        context.agentStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[selectedAgentIdKey] = agent.id
             prefs[selectedAgentNameKey] = agent.name
         }
     }
 
-    suspend fun updateAvailableAgents(agents: List<Agent>) {
-        if (agents.isEmpty()) return
-
-        _availableAgents.value = agents
-
+    suspend fun updateAvailableAgents(
+        agents: List<Agent>,
+        stale: Boolean = false,
+        lastAgentId: String? = null,
+    ) {
+        _roster.value = AgentRosterState(agents, stale = stale, lastError = null)
         val json = JSONArray().apply {
             agents.forEach { put(it.toJson()) }
         }.toString()
-
-        context.agentStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[cachedAgentsKey] = json
-        }
-
-        val currentId = getSelectedAgentId()
-        val stillExists = currentId != null && agents.any { it.id == currentId }
-        if (!stillExists) {
-            setSelectedAgent(agents.first())
+            if (agents.isEmpty()) {
+                prefs.remove(selectedAgentIdKey)
+                prefs.remove(selectedAgentNameKey)
+            } else {
+                val currentId = prefs[selectedAgentIdKey]?.takeIf { it.isNotBlank() }
+                val still = currentId != null && agents.any { it.id == currentId }
+                if (!still) {
+                    val pick = lastAgentId?.let { id -> agents.find { it.id == id } }
+                        ?: agents.first()
+                    prefs[selectedAgentIdKey] = pick.id
+                    prefs[selectedAgentNameKey] = pick.name
+                }
+            }
         }
     }
 
     suspend fun loadCachedAgents() {
-        val json = context.agentStore.data.map { prefs ->
+        val json = store.data.map { prefs ->
             prefs[cachedAgentsKey]
         }.first()
 
         if (json != null) {
             val agents = parseAgentsJson(json)
-            if (agents.isNotEmpty()) {
-                _availableAgents.value = agents
-            }
+            _roster.value = AgentRosterState(agents, stale = false, lastError = null)
         }
+    }
+
+    fun markAgentsFetchFailed(message: String) {
+        _roster.value = _roster.value.copy(stale = true, lastError = message)
     }
 
     private fun parseAgentsJson(json: String): List<Agent> {

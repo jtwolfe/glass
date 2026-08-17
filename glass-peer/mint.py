@@ -1,17 +1,23 @@
 """Invite minting and topic computation for glass-pair v1."""
 
 import hashlib
+import io
+import json
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # Crockford Base32 alphabet (no I, L, O, U to avoid confusion)
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
+# Phone parseV1 must accept every minted code. Exclude I L O U; 0 and 1 are valid.
+# Keep in lockstep with PairingInvite.kt: ^[0-9A-HJKMNP-TV-Z]{8}$
+PHONE_CROCKFORD_8_REGEX = re.compile(r"^[0-9A-HJKMNP-TV-Z]{8}$", re.IGNORECASE)
+
 # RFC 4648 Base32 alphabet for peer ID
 BASE32_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"
-
-VERSION_PREFIX = "glass-pair/v1"
 
 
 def crockford_encode(data: bytes, length: int) -> str:
@@ -40,32 +46,6 @@ def base32_encode(data: bytes) -> str:
     return "".join(result)
 
 
-def compute_topic(peer: str, pub: str, code: str) -> str:
-    """
-    Compute ntfy topic hash.
-
-    Topic = lowercase hex of SHA-256("glass-pair/v1\\n{peer}\\n{pub}\\n{code}")
-
-    This matches the Android NtfySignaling.computeInviteTopic() exactly.
-    """
-    input_str = f"{VERSION_PREFIX}\n{peer}\n{pub}\n{code}"
-    digest = hashlib.sha256(input_str.encode("utf-8")).digest()
-    return digest.hex().lower()
-
-
-def compute_stable_topic(plugin_peer: str, phone_peer: str) -> str:
-    """
-    Compute stable reconnect topic.
-
-    Topic = lowercase hex of SHA-256("glass-pair/v1\\n{plugin_peer}\\n{phone_peer}")
-
-    This matches PairingStore.computeStableTopic() on Android.
-    """
-    input_str = f"{VERSION_PREFIX}\n{plugin_peer}\n{phone_peer}"
-    digest = hashlib.sha256(input_str.encode("utf-8")).digest()
-    return digest.hex().lower()
-
-
 @dataclass
 class Invite:
     """Glass-pair v1 invite."""
@@ -77,11 +57,6 @@ class Invite:
     exp: str  # ISO-8601 expiry timestamp
 
     @property
-    def topic(self) -> str:
-        """Compute ntfy topic for this invite."""
-        return compute_topic(self.peer, self.pub, self.code)
-
-    @property
     def is_expired(self) -> bool:
         """Check if invite has expired."""
         try:
@@ -90,21 +65,23 @@ class Invite:
         except (ValueError, AttributeError):
             return True
 
-    def to_qr_json(self) -> dict:
+    def to_qr_json(self, wss: str | None = None) -> dict:
         """
         Return QR JSON payload.
 
         Format: {"v":1,"peer":"...","pub":"...","code":"...","exp":"..."}
-
-        No host, no IP - that's in the phone's ntfy settings.
+        Optional wss is a reachability hint only (never host/url).
         """
-        return {
+        payload = {
             "v": self.version,
             "peer": self.peer,
             "pub": self.pub,
             "code": self.code,
             "exp": self.exp,
         }
+        if wss:
+            payload["wss"] = wss
+        return payload
 
 
 def mint_invite(ttl_seconds: int = 300) -> Invite:
@@ -137,3 +114,25 @@ def mint_invite(ttl_seconds: int = 300) -> Invite:
         code=code,
         exp=exp,
     )
+
+
+def write_qr_svg(invite: Invite, dest: Path, wss: str | None = None) -> None:
+    """Write an SVG QR of the invite JSON next to state.json."""
+    import qrcode
+    import qrcode.image.svg
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    qr_data = json.dumps(invite.to_qr_json(wss=wss), separators=(",", ":"))
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    img = qr.make_image(image_factory=qrcode.image.svg.SvgImage)
+    buf = io.BytesIO()
+    img.save(buf)
+    dest.write_bytes(buf.getvalue())
