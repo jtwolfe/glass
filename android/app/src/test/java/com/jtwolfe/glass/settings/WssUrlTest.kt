@@ -35,17 +35,17 @@ class WssUrlTest {
     }
 
     @Test
-    fun parseAcceptsOperatorEnphiHost() {
-        val parsed = WssUrl.parse("wss://glass.enphi.net/session")
+    fun parseAcceptsPublicWssHost() {
+        val parsed = WssUrl.parse("wss://assistant.example.org/session")
         assertNotNull(parsed)
-        assertEquals("wss://glass.enphi.net/session", parsed!!.canonical)
+        assertEquals("wss://assistant.example.org/session", parsed!!.canonical)
     }
 
     @Test
     fun parseAcceptsLanWs() {
-        val parsed = WssUrl.parse("ws://192.168.1.200:8711/session")
+        val parsed = WssUrl.parse("ws://192.168.0.10:8711/session")
         assertNotNull(parsed)
-        assertEquals("ws://192.168.1.200:8711/session", parsed!!.canonical)
+        assertEquals("ws://192.168.0.10:8711/session", parsed!!.canonical)
     }
 
     @Test

@@ -33,6 +33,6 @@ class WssSettings(private val context: Context) {
     }
 
     companion object {
-        const val PLACEHOLDER = "wss://glass.enphi.net/session"
+        const val PLACEHOLDER = "wss://chat.example.com/session"
     }
 }

@@ -84,7 +84,7 @@ class TtsHelper(
         if (_state.value != TtsState.READY && _state.value != TtsState.SPEAKING) {
             return false
         }
-        val utteranceId = "ashleigh_${utteranceCounter.incrementAndGet()}"
+        val utteranceId = "tts_${utteranceCounter.incrementAndGet()}"
         val result = tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
         // ERROR does not invoke the progress listener; caller must finish the job.
         return result == TextToSpeech.SUCCESS

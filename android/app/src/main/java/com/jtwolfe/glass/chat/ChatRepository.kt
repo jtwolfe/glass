@@ -156,7 +156,7 @@ class ChatRepository(
         val session = sessionClient ?: return SendResult.NotConnected
         if (!session.isHelloed) return SendResult.NotConnected
         return session.send(
-            from = V0Message.FROM_JAMIE,
+            from = V0Message.FROM_SELF,
             text = message.text,
             at = message.at,
             agentId = agentId,

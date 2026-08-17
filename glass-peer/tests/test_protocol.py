@@ -11,7 +11,7 @@ from grokbot import GrokBotRoster
 from protocol import ProtocolHandler
 from state import StateStore
 from tests.test_grokbot import (
-    ASHLEIGH_ID,
+    ADA_ID,
     FakeGrokGateway,
     make_backend,
     start_fake_gateway,
@@ -48,7 +48,7 @@ async def test_handle_send_ack_has_request_id_and_echo_id(handler):
         "v": 1,
         "op": "send",
         "id": req_id,
-        "from": "jamie",
+        "from": "me",
         "text": "Hello world",
         "at": "2024-01-01T00:00:00Z",
     }
@@ -60,7 +60,7 @@ async def test_handle_send_ack_has_request_id_and_echo_id(handler):
     assert result["id"] == req_id
     assert result["echoId"]
     assert result["echoId"] != req_id
-    assert result["from"] == "jamie"
+    assert result["from"] == "me"
     assert result["text"] == "Hello world"
     assert "op" not in result
 
@@ -97,7 +97,7 @@ class RosterBackend:
         agents: list[AgentInfo] | None = None,
         *,
         stale: bool = False,
-        last_agent_id: str | None = "chel",
+        last_agent_id: str | None = "bea",
         fail: bool = False,
     ):
         self._agents = agents if agents is not None else [AgentInfo(id="a", name="A")]
@@ -134,9 +134,9 @@ async def test_handle_agents_includes_stale_and_last_agent(tmp_path):
     proto = ProtocolHandler(
         state,
         RosterBackend(
-            [AgentInfo(id="chel", name="Chel")],
+            [AgentInfo(id="bea", name="Bea")],
             stale=False,
-            last_agent_id="chel",
+            last_agent_id="bea",
         ),
     )
     proto.bind_session(FakeSession())
@@ -144,9 +144,9 @@ async def test_handle_agents_includes_stale_and_last_agent(tmp_path):
     result = await proto.handle({"v": 1, "op": "agents", "id": "agents-2"}, "a" * 52)
 
     assert result["ok"] is True
-    assert result["agents"] == [{"id": "chel", "name": "Chel"}]
+    assert result["agents"] == [{"id": "bea", "name": "Bea"}]
     assert result["stale"] is False
-    assert result["lastAgentId"] == "chel"
+    assert result["lastAgentId"] == "bea"
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_hello_does_not_dump_inbox(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "secret",
         },
         "a" * 52,
@@ -250,7 +250,7 @@ async def test_complete_without_live_queues_reply(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "gone",
         },
         "a" * 52,
@@ -269,7 +269,7 @@ async def test_complete_without_live_queues_reply(tmp_path):
 @pytest.mark.asyncio
 async def test_unsupported_version(handler):
     result = await handler.handle(
-        {"v": 2, "op": "send", "id": "x", "from": "jamie", "text": "hi"},
+        {"v": 2, "op": "send", "id": "x", "from": "me", "text": "hi"},
         "a" * 52,
     )
     assert result["error"] == "unsupported_version"
@@ -342,7 +342,7 @@ async def test_hard_failure_emits_op_error(tmp_path, detail):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
             "agentId": "wanted",
         },
@@ -375,7 +375,7 @@ async def test_hard_error_without_live_is_dropped(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
         },
         "a" * 52,
@@ -397,7 +397,7 @@ async def test_hard_error_is_not_persisted_in_session_log(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
         },
         "a" * 52,
@@ -419,7 +419,7 @@ async def test_cancelled_detail_emits_no_frame(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
         },
         "a" * 52,
@@ -441,7 +441,7 @@ async def test_leaky_exception_text_not_on_wire(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
         },
         "a" * 52,
@@ -466,7 +466,7 @@ async def test_empty_complete_sends_no_text_not_error(tmp_path):
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": "hi",
         },
         "a" * 52,
@@ -492,7 +492,7 @@ async def test_cancel_all_tasks_not_just_last(tmp_path):
                 "v": 1,
                 "op": "send",
                 "id": str(uuid.uuid4()),
-                "from": "jamie",
+                "from": "me",
                 "text": "hi",
             },
             "a" * 52,
@@ -524,9 +524,9 @@ async def test_kick_after_send_no_reply_or_error(tmp_path):
                 "v": 1,
                 "op": "send",
                 "id": str(uuid.uuid4()),
-                "from": "jamie",
+                "from": "me",
                 "text": "hi",
-                "agentId": ASHLEIGH_ID,
+                "agentId": ADA_ID,
             },
             "a" * 52,
         )
@@ -558,9 +558,9 @@ async def test_grokbot_reply_from_name_for_not_second_list(tmp_path):
                 "v": 1,
                 "op": "send",
                 "id": str(uuid.uuid4()),
-                "from": "jamie",
+                "from": "me",
                 "text": "hi",
-                "agentId": ASHLEIGH_ID,
+                "agentId": ADA_ID,
             },
             "a" * 52,
         )
@@ -569,13 +569,13 @@ async def test_grokbot_reply_from_name_for_not_second_list(tmp_path):
         replies = [f for f in session.sent if f.get("op") == "reply"]
         assert len(replies) == 2
         assert [r["text"] for r in replies] == [
-            "Hello from Ashleigh",
+            "Hello from Ada",
             "Second bubble",
         ]
         assert [r["seq"] for r in replies] == [0, 1]
-        assert replies[0]["from"] == "Ashleigh"
-        assert replies[1]["from"] == "Ashleigh"
-        assert replies[0]["agentId"] == ASHLEIGH_ID
+        assert replies[0]["from"] == "Ada"
+        assert replies[1]["from"] == "Ada"
+        assert replies[0]["agentId"] == ADA_ID
         assert replies[0]["inReplyTo"] == ack["echoId"]
         assert replies[1]["inReplyTo"] == ack["echoId"]
         assert not any(f.get("op") == "error" for f in session.sent)
@@ -599,9 +599,9 @@ async def test_grokbot_tool_only_protocol_no_text_no_error(tmp_path):
                 "v": 1,
                 "op": "send",
                 "id": str(uuid.uuid4()),
-                "from": "jamie",
+                "from": "me",
                 "text": "hi",
-                "agentId": ASHLEIGH_ID,
+                "agentId": ADA_ID,
             },
             "a" * 52,
         )
@@ -609,7 +609,7 @@ async def test_grokbot_tool_only_protocol_no_text_no_error(tmp_path):
         replies = [f for f in session.sent if f.get("op") == "reply"]
         assert len(replies) == 1
         assert replies[0]["text"] == "(no text)"
-        assert replies[0]["from"] == "Ashleigh"
+        assert replies[0]["from"] == "Ada"
         assert not any(f.get("op") == "error" for f in session.sent)
     finally:
         await runner.cleanup()
@@ -621,9 +621,9 @@ async def _grok_send(proto: ProtocolHandler, text: str = "hi") -> dict:
             "v": 1,
             "op": "send",
             "id": str(uuid.uuid4()),
-            "from": "jamie",
+            "from": "me",
             "text": text,
-            "agentId": ASHLEIGH_ID,
+            "agentId": ADA_ID,
         },
         "a" * 52,
     )
@@ -645,7 +645,7 @@ async def test_grokbot_staged_two_op_replies_incrementing_seq(tmp_path):
         replies = [f for f in session.sent if f.get("op") == "reply"]
         assert [r["text"] for r in replies] == ["I'll check.", "Here's the report."]
         assert [r["seq"] for r in replies] == [0, 1]
-        assert all(r["from"] == "Ashleigh" for r in replies)
+        assert all(r["from"] == "Ada" for r in replies)
         assert all(r["inReplyTo"] == ack["echoId"] for r in replies)
         assert all(r.get("live") is True for r in replies)
         assert not any(f.get("op") == "error" for f in session.sent)

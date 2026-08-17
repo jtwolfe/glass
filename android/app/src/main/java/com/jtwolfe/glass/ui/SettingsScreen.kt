@@ -445,8 +445,8 @@ private fun SessionUrlSection(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Session URL", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Public: wss://glass.enphi.net/session (HTTPS reverse proxy). " +
-                "LAN fallback: ws://192.168.1.200:8711/session. " +
+            "Public: wss://chat.example.com/session (your reverse proxy). " +
+                "LAN fallback: ws:// to a private IP only. " +
                 "Do not use 127.0.0.1 — that is this phone.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

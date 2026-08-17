@@ -1,5 +1,5 @@
-# Optional host-network sidecar next to nginx.
-# Intended run is `python main.py` on the same host/netns as nginx.
+# Optional host-network sidecar next to the reverse proxy.
+# Intended run is `python main.py` on the same host/netns as the proxy.
 # Do not publish 8080 or 8711.
 
 services:

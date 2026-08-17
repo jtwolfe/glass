@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Glass</string>
     <string name="peer_name">Assistant</string>
-    <string name="self_name">Jamie</string>
+    <string name="self_name">You</string>
 </resources>

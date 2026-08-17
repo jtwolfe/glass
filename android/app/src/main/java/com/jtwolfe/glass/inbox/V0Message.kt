@@ -12,8 +12,8 @@ data class V0Message(
     val seq: Long? = null,
     val sessionId: String? = null,
 ) {
-    val isOutgoing: Boolean get() = from.equals(FROM_JAMIE, ignoreCase = true)
-    val displayName: String get() = if (isOutgoing) "Jamie" else from
+    val isOutgoing: Boolean get() = from.equals(FROM_SELF, ignoreCase = true)
+    val displayName: String get() = if (isOutgoing) "You" else from
 
     fun toJson(): JSONObject = JSONObject()
         .put("from", from)
@@ -26,11 +26,11 @@ data class V0Message(
         }
 
     companion object {
-        const val FROM_JAMIE = "jamie"
-        const val FROM_ASSISTANT = "ashleigh"
+        const val FROM_SELF = "me"
+        const val FROM_ASSISTANT = "assistant"
 
         fun outgoing(text: String, at: Instant = Instant.now()): V0Message =
-            V0Message(from = FROM_JAMIE, text = text, at = at.toString())
+            V0Message(from = FROM_SELF, text = text, at = at.toString())
 
         fun fromJson(obj: JSONObject): V0Message? {
             val text = obj.optString("text").trim()

@@ -16,17 +16,17 @@ class SessionClientTest {
         val json = JSONObject()
             .put("ok", true)
             .put("stale", true)
-            .put("lastAgentId", "028324f9-fde3-40b3-be75-717df409b2dd")
+            .put("lastAgentId", "bbbbbbbb-2222-4000-8000-000000000002")
             .put(
                 "agents",
                 JSONArray().put(
-                    JSONObject().put("id", "a").put("name", "Ashleigh"),
+                    JSONObject().put("id", "a").put("name", "Ada"),
                 ),
             )
         val result = parseAgentsResult(json) as AgentsResult.Success
         assertTrue(result.stale)
-        assertEquals("028324f9-fde3-40b3-be75-717df409b2dd", result.lastAgentId)
-        assertEquals(listOf(SessionAgent("a", "Ashleigh")), result.agents)
+        assertEquals("bbbbbbbb-2222-4000-8000-000000000002", result.lastAgentId)
+        assertEquals(listOf(SessionAgent("a", "Ada")), result.agents)
     }
 
     @Test
@@ -89,7 +89,7 @@ class SessionClientTest {
             val frame = JSONObject()
                 .put("op", "reply")
                 .put("id", "reply-id")
-                .put("from", "Ashleigh")
+                .put("from", "Ada")
                 .put("text", "hi")
                 .put("seq", 1)
             client.handleSessionFrame(frame)
@@ -124,7 +124,7 @@ class SessionClientTest {
             val reply = JSONObject()
                 .put("op", "reply")
                 .put("id", "r0")
-                .put("from", "Ashleigh")
+                .put("from", "Ada")
                 .put("text", "I'll check.")
                 .put("seq", 0)
                 .put("live", false)
@@ -181,7 +181,7 @@ class SessionClientTest {
                 JSONObject()
                     .put("op", "reply")
                     .put("id", "r1")
-                    .put("from", "Ashleigh")
+                    .put("from", "Ada")
                     .put("text", "hi")
                     .put("seq", 1),
             )

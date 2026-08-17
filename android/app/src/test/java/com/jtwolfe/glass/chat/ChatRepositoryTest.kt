@@ -122,7 +122,7 @@ class ChatRepositoryTest {
         catchUp: Boolean = false,
     ) = PluginMessage(
         id = "r-$seq",
-        from = "Ashleigh",
+        from = "Ada",
         text = text,
         at = "2026-08-17T12:00:00.000Z",
         seq = seq,
@@ -133,7 +133,7 @@ class ChatRepositoryTest {
 
     private fun replyRow(sessionId: String, seq: Long, text: String) = V0Message(
         id = "r-$seq",
-        from = "Ashleigh",
+        from = "Ada",
         text = text,
         at = "2026-08-17T12:00:00.000Z",
         seq = seq,

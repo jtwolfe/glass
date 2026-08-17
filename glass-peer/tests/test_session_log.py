@@ -13,7 +13,7 @@ from state import StateStore
 def _payload(text: str = "hi", **extra) -> dict:
     row = {
         "id": str(uuid.uuid4()),
-        "from": "Ashleigh",
+        "from": "Ada",
         "agentId": "agent-1",
         "text": text,
         "at": "2026-08-17T12:00:00.000+00:00",

@@ -213,7 +213,7 @@ fun PairingScreen(
 
             Text(
                 "Talk uses the Session URL in Settings. " +
-                    "Default is wss://glass.enphi.net/session (HTTPS via your reverse proxy). " +
+                    "Example: wss://chat.example.com/session (your reverse proxy). " +
                     "Do not use 127.0.0.1 — that is this phone. " +
                     "A QR hint is used only when Settings is empty.",
                 style = MaterialTheme.typography.bodySmall,

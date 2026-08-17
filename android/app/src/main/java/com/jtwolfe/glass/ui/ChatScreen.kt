@@ -50,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.jtwolfe.glass.R
 import com.jtwolfe.glass.chat.ChatUiState
 import com.jtwolfe.glass.chat.SttError
 import com.jtwolfe.glass.inbox.V0Message
@@ -252,7 +254,7 @@ private fun AssistantBanner(onRequest: () -> Unit) {
 @Composable
 private fun MessageBubble(message: V0Message, agentName: String) {
     val outgoing = message.isOutgoing
-    val senderName = if (outgoing) "Jamie" else agentName
+    val senderName = if (outgoing) stringResource(R.string.self_name) else agentName
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start,

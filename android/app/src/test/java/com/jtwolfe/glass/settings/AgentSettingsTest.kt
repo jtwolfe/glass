@@ -27,7 +27,7 @@ class AgentSettingsTest {
     fun emptySuccessPersistsEmptyJsonAndDeletesSelectionKeys() = runBlocking {
         val store = MemoryPrefsStore()
         val settings = AgentSettings(store)
-        settings.updateAvailableAgents(listOf(Agent("a", "Ashleigh")))
+        settings.updateAvailableAgents(listOf(Agent("a", "Ada")))
         assertEquals("a", settings.getSelectedAgentId())
 
         settings.updateAvailableAgents(emptyList())
@@ -47,9 +47,9 @@ class AgentSettingsTest {
     fun failedFetchKeepsCacheAndSelection() = runBlocking {
         val store = MemoryPrefsStore()
         val settings = AgentSettings(store)
-        val agents = listOf(Agent("a", "Ashleigh"), Agent("c", "Chel"))
+        val agents = listOf(Agent("a", "Ada"), Agent("c", "Bea"))
         settings.updateAvailableAgents(agents)
-        settings.setSelectedAgent(Agent("c", "Chel"))
+        settings.setSelectedAgent(Agent("c", "Bea"))
         val jsonBefore = store.data.first()[cachedAgentsKey]
 
         settings.markAgentsFetchFailed("agent_unavailable")
@@ -60,14 +60,14 @@ class AgentSettingsTest {
         assertEquals("c", settings.getSelectedAgentId())
         assertEquals(jsonBefore, store.data.first()[cachedAgentsKey])
         assertEquals("c", store.data.first()[selectedAgentIdKey])
-        assertEquals("Chel", store.data.first()[selectedAgentNameKey])
+        assertEquals("Bea", store.data.first()[selectedAgentNameKey])
     }
 
     @Test
     fun processRestartFromCachedEmptyStaysEmpty() = runBlocking {
         val store = MemoryPrefsStore()
         val first = AgentSettings(store)
-        first.updateAvailableAgents(listOf(Agent("a", "Ashleigh")))
+        first.updateAvailableAgents(listOf(Agent("a", "Ada")))
         first.updateAvailableAgents(emptyList())
         assertEquals("[]", store.data.first()[cachedAgentsKey])
 
@@ -84,7 +84,7 @@ class AgentSettingsTest {
     fun loadCachedAgentsAppliesPersistedEmptyOverInMemoryList() = runBlocking {
         val store = MemoryPrefsStore()
         val settings = AgentSettings(store)
-        settings.updateAvailableAgents(listOf(Agent("a", "Ashleigh")))
+        settings.updateAvailableAgents(listOf(Agent("a", "Ada")))
         store.edit { prefs ->
             prefs[cachedAgentsKey] = "[]"
             prefs.remove(selectedAgentIdKey)
@@ -101,19 +101,19 @@ class AgentSettingsTest {
     fun updatePicksLastAgentIdWhenCurrentMissing() = runBlocking {
         val settings = AgentSettings(MemoryPrefsStore())
         settings.updateAvailableAgents(
-            listOf(Agent("a", "Ashleigh"), Agent("c", "Chel")),
+            listOf(Agent("a", "Ada"), Agent("c", "Bea")),
             lastAgentId = "c",
         )
         assertEquals("c", settings.getSelectedAgentId())
-        assertEquals("Chel", settings.selectedAgent.first().name)
+        assertEquals("Bea", settings.selectedAgent.first().name)
     }
 
     @Test
     fun updateKeepsCurrentWhenStillPresent() = runBlocking {
         val settings = AgentSettings(MemoryPrefsStore())
-        settings.updateAvailableAgents(listOf(Agent("a", "Ashleigh")))
+        settings.updateAvailableAgents(listOf(Agent("a", "Ada")))
         settings.updateAvailableAgents(
-            listOf(Agent("a", "Ashleigh"), Agent("c", "Chel")),
+            listOf(Agent("a", "Ada"), Agent("c", "Bea")),
             lastAgentId = "c",
         )
         assertEquals("a", settings.getSelectedAgentId())
@@ -123,7 +123,7 @@ class AgentSettingsTest {
     fun updateFallsBackToFirstWhenLastAgentIdMissing() = runBlocking {
         val settings = AgentSettings(MemoryPrefsStore())
         settings.updateAvailableAgents(
-            listOf(Agent("a", "Ashleigh"), Agent("c", "Chel")),
+            listOf(Agent("a", "Ada"), Agent("c", "Bea")),
             lastAgentId = "missing",
         )
         assertEquals("a", settings.getSelectedAgentId())
@@ -132,7 +132,7 @@ class AgentSettingsTest {
     @Test
     fun setSelectedAgentIgnoresBlankId() = runBlocking {
         val settings = AgentSettings(MemoryPrefsStore())
-        settings.updateAvailableAgents(listOf(Agent("a", "Ashleigh")))
+        settings.updateAvailableAgents(listOf(Agent("a", "Ada")))
         settings.setSelectedAgent(AgentSettings.PLACEHOLDER_AGENT)
         assertEquals("a", settings.getSelectedAgentId())
     }

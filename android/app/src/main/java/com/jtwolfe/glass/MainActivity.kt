@@ -723,7 +723,7 @@ class MainActivity : ComponentActivity() {
                 "Glass uses the microphone for voice input. " +
                     "When logged into xAI, speech is sent to api.x.ai/v1/stt. " +
                     "Otherwise, Android's on-device recognizer is used. " +
-                    "The transcript is posted as Jamie's message.",
+                    "The transcript is posted as your message.",
             )
             .setPositiveButton("Allow") { _, _ ->
                 micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)

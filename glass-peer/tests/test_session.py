@@ -136,7 +136,7 @@ async def test_reconnect_hello_requires_phone_peer(env):
 async def test_first_frame_neither_pair_nor_hello_rejected(env):
     async with aiohttp.ClientSession() as sess, sess.ws_connect(env.ws_url) as ws:
         await ws.send_json(
-            {"v": 1, "op": "send", "id": "s", "from": "jamie", "text": "x"}
+            {"v": 1, "op": "send", "id": "s", "from": "me", "text": "x"}
         )
         resp = await ws.receive_json()
         assert resp["ok"] is False
@@ -177,7 +177,7 @@ async def test_echo_send_complete_and_seq(env):
                 "v": 1,
                 "op": "send",
                 "id": sid,
-                "from": "jamie",
+                "from": "me",
                 "text": "hi",
                 "at": "2024-01-01T00:00:00Z",
             }
@@ -218,7 +218,7 @@ async def test_no_live_ws_queues_reply_and_catchup(tmp_path):
                     "v": 1,
                     "op": "send",
                     "id": str(uuid.uuid4()),
-                    "from": "jamie",
+                    "from": "me",
                     "text": "late",
                 }
             )
@@ -571,22 +571,22 @@ def test_bind_nonlocal_allowed_with_escape(monkeypatch, tmp_path):
     assert cfg.session_bind == "0.0.0.0"
 
 
-def test_public_wss_operator_enphi_allowed(monkeypatch, tmp_path):
+def test_public_wss_example_host_allowed(monkeypatch, tmp_path):
     monkeypatch.setenv("GLASS_PAIR_USERNAME", "u")
     monkeypatch.setenv("GLASS_PAIR_PASSWORD", "p")
     monkeypatch.setenv("GLASS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("GLASS_PUBLIC_WSS_URL", "wss://glass.enphi.net/session")
+    monkeypatch.setenv("GLASS_PUBLIC_WSS_URL", "wss://chat.example.com/session")
     cfg = Config.from_env()
-    assert cfg.public_wss_url == "wss://glass.enphi.net/session"
+    assert cfg.public_wss_url == "wss://chat.example.com/session"
 
 
 def test_public_ws_lan_allowed_loopback_refused(monkeypatch, tmp_path):
     monkeypatch.setenv("GLASS_PAIR_USERNAME", "u")
     monkeypatch.setenv("GLASS_PAIR_PASSWORD", "p")
     monkeypatch.setenv("GLASS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("GLASS_PUBLIC_WSS_URL", "ws://192.168.1.200:8711/session")
+    monkeypatch.setenv("GLASS_PUBLIC_WSS_URL", "ws://192.168.0.10:8711/session")
     cfg = Config.from_env()
-    assert cfg.public_wss_url == "ws://192.168.1.200:8711/session"
+    assert cfg.public_wss_url == "ws://192.168.0.10:8711/session"
     monkeypatch.setenv("GLASS_PUBLIC_WSS_URL", "ws://127.0.0.1:8711/session")
     with pytest.raises(ValueError, match="127.0.0.1"):
         Config.from_env()

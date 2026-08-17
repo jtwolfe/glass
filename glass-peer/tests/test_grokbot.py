@@ -23,17 +23,17 @@ from session import bound_port
 
 PHONE = "a" * 52
 
-ASHLEIGH_ID = "28b14c15-d85a-4fdf-9d64-770a4d0d4084"
-CHEL_ID = "028324f9-aaaa-4fdf-9d64-770a4d0d4084"
-TATE_ID = "089b5165-a6f9-434a-abea-0ebda46cca7b"
+ADA_ID = "aaaaaaaa-1111-4000-8000-000000000001"
+BEA_ID = "bbbbbbbb-2222-4000-8000-000000000002"
+CAI_ID = "cccccccc-3333-4000-8000-000000000003"
 
 ROSTER_KEY = "sand.client.slice.account.fixture.roster.last-roster"
 LAST_AGENT_KEY = "sand.client.slice.account.fixture.selection.last-agent"
 
 LIVE_ROWS = [
     {
-        "id": ASHLEIGH_ID,
-        "name": "Ashleigh",
+        "id": ADA_ID,
+        "name": "Ada",
         "isGroup": False,
         "isHiddenFromSidebar": False,
         "avatarDataUrl": "data:image/png;base64,AAA",
@@ -51,36 +51,36 @@ LIVE_ROWS = [
         "isHiddenFromSidebar": True,
     },
     {
-        "id": CHEL_ID,
-        "name": "Chel",
+        "id": BEA_ID,
+        "name": "Bea",
         "isGroup": False,
         "isHiddenFromSidebar": False,
     },
     {"id": "", "name": "NoId"},
     {"name": "MissingId"},
-    {"agentId": TATE_ID, "title": "Tate"},
+    {"agentId": CAI_ID, "title": "Cai"},
 ]
 
 DISK_ROWS = [
     {
-        "id": ASHLEIGH_ID,
-        "name": "Ashleigh",
+        "id": ADA_ID,
+        "name": "Ada",
         "isGroup": False,
         "isHiddenFromSidebar": False,
     },
     {"id": "group-disk", "name": "Disk Group", "isGroup": True},
     {
-        "id": CHEL_ID,
-        "name": "Chel",
+        "id": BEA_ID,
+        "name": "Bea",
         "isGroup": False,
         "isHiddenFromSidebar": False,
     },
 ]
 
 FILTERED_LIVE = [
-    (ASHLEIGH_ID, "Ashleigh"),
-    (CHEL_ID, "Chel"),
-    (TATE_ID, "Tate"),
+    (ADA_ID, "Ada"),
+    (BEA_ID, "Bea"),
+    (CAI_ID, "Cai"),
 ]
 
 
@@ -107,7 +107,7 @@ def write_gateway(path: Path, port: int, token: str = "test-token") -> None:
 
 def write_disk_roster(root: Path) -> None:
     write_blob(root, ROSTER_KEY, {"rows": DISK_ROWS}, schema=2)
-    write_blob(root, LAST_AGENT_KEY, {"agentId": CHEL_ID}, schema=1)
+    write_blob(root, LAST_AGENT_KEY, {"agentId": BEA_ID}, schema=1)
 
 
 async def start_list_server(handler) -> tuple[web.AppRunner, int]:
@@ -162,7 +162,7 @@ def live_shaped_entries(nonce: str) -> list[dict]:
             "kind": "message",
             "role": "assistant",
             "content": "chip MUST NOT JOIN",
-            "toAgent": {"id": CHEL_ID, "name": "Chel", "kind": "agent"},
+            "toAgent": {"id": BEA_ID, "name": "Bea", "kind": "agent"},
         },
         {
             "kind": "send-message",
@@ -172,7 +172,7 @@ def live_shaped_entries(nonce: str) -> list[dict]:
         {
             "kind": "send-message",
             "content": "TOP LEVEL MUST NOT JOIN",
-            "message": {"type": "text", "content": "Hello from Ashleigh"},
+            "message": {"type": "text", "content": "Hello from Ada"},
         },
         {"kind": "event", "type": "tool"},
         {
@@ -251,8 +251,8 @@ class FakeGrokGateway:
                         "role": "assistant",
                         "content": "NOT A BUBBLE",
                         "toAgent": {
-                            "id": CHEL_ID,
-                            "name": "Chel",
+                            "id": BEA_ID,
+                            "name": "Bea",
                             "kind": "agent",
                         },
                     },
@@ -389,8 +389,8 @@ def test_read_last_roster_uses_stem_not_filename(tmp_path):
     write_disk_roster(persist)
     agents = read_last_roster(str(persist))
     assert [(a.id, a.name) for a in agents] == [
-        (ASHLEIGH_ID, "Ashleigh"),
-        (CHEL_ID, "Chel"),
+        (ADA_ID, "Ada"),
+        (BEA_ID, "Bea"),
     ]
 
 
@@ -412,10 +412,10 @@ async def test_list_roster_live_filters_and_last_agent(tmp_path):
             assert set(agent.__dataclass_fields__) == {"id", "name"}
         assert roster.stale is False
         assert roster.source == "live"
-        assert roster.last_agent_id == CHEL_ID
-        cached = await backend.name_for(ASHLEIGH_ID)
+        assert roster.last_agent_id == BEA_ID
+        cached = await backend.name_for(ADA_ID)
         assert cached is not None
-        assert cached.name == "Ashleigh"
+        assert cached.name == "Ada"
     finally:
         await runner.cleanup()
 
@@ -433,11 +433,11 @@ async def test_list_roster_503_uses_disk_stale(tmp_path):
         assert roster.stale is True
         assert roster.source == "last-roster"
         assert [(a.id, a.name) for a in roster.agents] == [
-            (ASHLEIGH_ID, "Ashleigh"),
-            (CHEL_ID, "Chel"),
+            (ADA_ID, "Ada"),
+            (BEA_ID, "Bea"),
         ]
-        assert roster.last_agent_id == CHEL_ID
-        assert await backend.name_for(ASHLEIGH_ID) is None
+        assert roster.last_agent_id == BEA_ID
+        assert await backend.name_for(ADA_ID) is None
     finally:
         await runner.cleanup()
 
@@ -458,7 +458,7 @@ async def test_list_roster_connection_reset_uses_disk_stale(tmp_path):
         roster = await backend.list_roster()
         assert roster.stale is True
         assert roster.source == "last-roster"
-        assert [a.id for a in roster.agents] == [ASHLEIGH_ID, CHEL_ID]
+        assert [a.id for a in roster.agents] == [ADA_ID, BEA_ID]
     finally:
         await runner.cleanup()
 
@@ -500,22 +500,22 @@ async def test_complete_collects_this_turn_sm_text_only(tmp_path):
     try:
         backend = make_backend(tmp_path, port)
         text = await backend.complete(
-            text="ping from glass", agent_id=ASHLEIGH_ID, phone_peer=PHONE
+            text="ping from glass", agent_id=ADA_ID, phone_peer=PHONE
         )
-        assert text == "Hello from Ashleigh\n\nSecond bubble"
+        assert text == "Hello from Ada\n\nSecond bubble"
         assert "chip" not in text
         assert "TOP LEVEL" not in text
         assert "widget" not in text
         assert "Later turn" not in text
         assert len(gw.sends) == 1
         send = gw.sends[0]
-        assert send["agentId"] == ASHLEIGH_ID
+        assert send["agentId"] == ADA_ID
         assert send["prompt"] == "ping from glass"
         assert send["clientNonce"]
         assert "directAddressedAcceptance" not in send
         assert set(send) == {"agentId", "prompt", "clientNonce"}
         assert gw.tails
-        assert gw.tails[0]["id"] == ASHLEIGH_ID
+        assert gw.tails[0]["id"] == ADA_ID
         assert gw.tails[0]["limit"] == 50
         assert "agentId" not in gw.tails[0]
     finally:
@@ -528,7 +528,7 @@ async def test_complete_assistant_only_is_not_a_bubble(tmp_path):
     runner, port = await start_fake_gateway(gw)
     try:
         backend = make_backend(tmp_path, port, timeout_sec=0.35, poll_sec=0.05)
-        text = await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+        text = await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert text == ""
         assert gw.sends
     finally:
@@ -543,7 +543,7 @@ async def test_complete_page2_nonce_echo_still_collects(tmp_path):
         backend = make_backend(
             tmp_path, port, timeout_sec=2, poll_sec=0.05, tail_pages=4
         )
-        text = await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+        text = await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert text == "from page 2"
         assert any("beforeSeq" in body for body in gw.tails)
     finally:
@@ -559,7 +559,7 @@ async def test_complete_missing_echo_times_out(tmp_path):
             tmp_path, port, timeout_sec=0.35, poll_sec=0.08, tail_pages=2
         )
         with pytest.raises(AgentUnavailable) as exc:
-            await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+            await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert exc.value.detail == "timeout"
         # Must keep polling after the first page walk, not stop on page 1.
         assert len(gw.tails) > 1 + 2
@@ -573,7 +573,7 @@ async def test_complete_other_user_cut_before_sm_text_keeps_polling(tmp_path):
     runner, port = await start_fake_gateway(gw)
     try:
         backend = make_backend(tmp_path, port, timeout_sec=2, poll_sec=0.05)
-        text = await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+        text = await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert text == "finally"
         assert gw.tail_polls >= 3
     finally:
@@ -606,7 +606,7 @@ async def test_complete_live_list_503_is_no_gateway(tmp_path):
         backend = make_backend(tmp_path, port)
         write_disk_roster(tmp_path / "persist")
         with pytest.raises(AgentUnavailable) as exc:
-            await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+            await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert exc.value.detail == "no_gateway"
         assert gw.sends == []
     finally:
@@ -619,7 +619,7 @@ async def test_complete_tool_only_timeout_returns_empty(tmp_path):
     runner, port = await start_fake_gateway(gw)
     try:
         backend = make_backend(tmp_path, port, timeout_sec=0.35, poll_sec=0.05)
-        text = await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+        text = await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert text == ""
     finally:
         await runner.cleanup()
@@ -632,7 +632,7 @@ async def test_complete_cancel_during_tail(tmp_path):
     try:
         backend = make_backend(tmp_path, port, timeout_sec=5)
         task = asyncio.create_task(
-            backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+            backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         )
         await asyncio.wait_for(gw.hung.wait(), 2)
         await backend.cancel()
@@ -652,7 +652,7 @@ async def test_task_cancel_logs_watch_end_cancel(tmp_path, caplog):
         backend = make_backend(tmp_path, port, timeout_sec=5)
         caplog.set_level(logging.INFO)
         task = asyncio.create_task(
-            backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+            backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         )
         await asyncio.wait_for(gw.hung.wait(), 2)
         task.cancel()
@@ -676,7 +676,7 @@ async def test_complete_rejected_send(tmp_path):
     try:
         backend = make_backend(tmp_path, port)
         with pytest.raises(AgentUnavailable) as exc:
-            await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
+            await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
         assert exc.value.detail == "rejected"
         assert gw.tails == []
     finally:
@@ -690,8 +690,8 @@ async def test_complete_missing_accepted_still_collects(tmp_path):
     runner, port = await start_fake_gateway(gw)
     try:
         backend = make_backend(tmp_path, port)
-        text = await backend.complete(text="hi", agent_id=ASHLEIGH_ID, phone_peer=PHONE)
-        assert text == "Hello from Ashleigh\n\nSecond bubble"
+        text = await backend.complete(text="hi", agent_id=ADA_ID, phone_peer=PHONE)
+        assert text == "Hello from Ada\n\nSecond bubble"
     finally:
         await runner.cleanup()
 
@@ -704,12 +704,12 @@ async def test_complete_blank_agent_uses_last_agent(tmp_path):
         backend = make_backend(tmp_path, port)
         write_disk_roster(tmp_path / "persist")
         text = await backend.complete(text="hi", agent_id=None, phone_peer=PHONE)
-        assert text == "Hello from Ashleigh\n\nSecond bubble"
-        assert gw.sends[0]["agentId"] == CHEL_ID
+        assert text == "Hello from Ada\n\nSecond bubble"
+        assert gw.sends[0]["agentId"] == BEA_ID
         named = await backend.name_for(None)
         assert named is not None
-        assert named.id == CHEL_ID
-        assert named.name == "Chel"
+        assert named.id == BEA_ID
+        assert named.name == "Bea"
     finally:
         await runner.cleanup()
 
@@ -764,12 +764,12 @@ def test_newest_last_roster_mtime_wins(tmp_path):
     new_path = write_blob(
         persist,
         newer_key,
-        {"rows": [{"id": ASHLEIGH_ID, "name": "Ashleigh"}]},
+        {"rows": [{"id": ADA_ID, "name": "Ada"}]},
     )
     os.utime(old_path, (1_000_000, 1_000_000))
     os.utime(new_path, (2_000_000, 2_000_000))
     agents = read_last_roster(str(persist))
-    assert [a.id for a in agents] == [ASHLEIGH_ID]
+    assert [a.id for a in agents] == [ADA_ID]
 
 
 def test_schema1_agents_dict(tmp_path):
@@ -777,20 +777,20 @@ def test_schema1_agents_dict(tmp_path):
     write_blob(
         persist,
         ROSTER_KEY,
-        {"agents": {ASHLEIGH_ID: {"name": "Ashleigh"}, CHEL_ID: {"name": "Chel"}}},
+        {"agents": {ADA_ID: {"name": "Ada"}, BEA_ID: {"name": "Bea"}}},
         schema=1,
     )
     agents = read_last_roster(str(persist))
     assert {(a.id, a.name) for a in agents} == {
-        (ASHLEIGH_ID, "Ashleigh"),
-        (CHEL_ID, "Chel"),
+        (ADA_ID, "Ada"),
+        (BEA_ID, "Bea"),
     }
 
 
 async def _collect_bubbles(backend: GrokBotBackend, text: str = "hi") -> list[str]:
     out: list[str] = []
     async for bubble in backend.stream_complete(
-        text=text, agent_id=ASHLEIGH_ID, phone_peer=PHONE
+        text=text, agent_id=ADA_ID, phone_peer=PHONE
     ):
         out.append(bubble)
     return out
@@ -805,7 +805,7 @@ async def test_stream_complete_staged_yields_two_then_join(tmp_path):
         bubbles = await _collect_bubbles(backend)
         assert bubbles == ["I'll check.", "Here's the report."]
         joined = await backend.complete(
-            text="again", agent_id=ASHLEIGH_ID, phone_peer=PHONE
+            text="again", agent_id=ADA_ID, phone_peer=PHONE
         )
         assert joined == "I'll check.\n\nHere's the report."
     finally:
@@ -865,7 +865,7 @@ async def test_cancel_then_second_stream_complete_still_yields(tmp_path):
         gw.hang.set()
         gw.mode = "live"
         bubbles = await _collect_bubbles(backend)
-        assert bubbles == ["Hello from Ashleigh", "Second bubble"]
+        assert bubbles == ["Hello from Ada", "Second bubble"]
     finally:
         gw.hang.set()
         await runner.cleanup()
